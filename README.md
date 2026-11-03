@@ -16,12 +16,22 @@ Paste a link, pick your options, hit <b>Download</b>.
 
 ## Download & run (no install needed)
 
-1. Go to [**Releases**](../../releases/latest) and download `RetroGrab-x.x.x-win64.zip`.
+> [!IMPORTANT]
+> **Don't use the green "Code → Download ZIP" button.** That's the source code and needs Python.
+> Download the ready-to-run app from **[Releases](../../releases/latest)** instead.
+
+1. Go to [**Releases**](../../releases/latest) and download `RetroGrab-x.x.x-win64.zip` (under *Assets*).
 2. Unzip the whole folder somewhere you can write to (Documents, Desktop, `D:\` …). Don't run it from inside the zip.
 3. Double-click **`RetroGrab.exe`**. For a Desktop shortcut: right-click it, then **Send to > Desktop (create shortcut)**.
 4. If Windows shows *"Windows protected your PC"*, click **More info**, then **Run anyway**. This appears for any app that isn't code-signed.
 
-Everything the app needs (Python, ffmpeg, a JavaScript runtime) is bundled. Windows 10 or 11, 64-bit.
+**Nothing else to install.** Python, yt-dlp, gallery-dl, ffmpeg and a JavaScript runtime are all inside the zip, and the app never uses copies installed on the PC.
+
+| Requirement | Notes |
+|---|---|
+| Windows 10 or 11, 64-bit | Windows on ARM works too, through Windows' built-in x64 emulation. Windows 7/8 are not supported. |
+| Internet connection | for downloading, obviously |
+| Microsoft Edge WebView2 | **only** for the Instagram login window. Already included in Windows 11 and up-to-date Windows 10. If the login window won't open, install the free [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/). |
 
 ### Instagram login
 Most Instagram links need a login. On the Instagram tab, click **Log in to Instagram…**. A small window shows Instagram's real login page, and RetroGrab never sees your password. When you're signed in, the window closes and the session is saved **only on your PC** (`data\` next to the exe). Use **Log out** to delete it.
