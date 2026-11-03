@@ -91,23 +91,32 @@ def pyinstaller():
 
 def install_app(built):
     """Replace the program files in App\\ but keep App\\data (settings, history, login)."""
+    import time
     os.makedirs(APP, exist_ok=True)
-    exe = os.path.join(APP, "RetroGrab.exe")
-    if os.path.isfile(exe):  # renaming fails if the app is running - check before deleting anything
-        try:
-            os.rename(exe, exe + ".check")
-            os.rename(exe + ".check", exe)
-        except OSError:
-            sys.exit("RetroGrab is running - close it, then run the build again.")
-    for name in ("_internal", "RetroGrab.exe", "README.txt"):
+    internal = os.path.join(APP, "_internal")
+    old = os.path.join(APP, "_internal.old")
+    if os.path.isdir(old):
+        shutil.rmtree(old, ignore_errors=True)
+    if os.path.isdir(internal):
+        # A folder can't be renamed while a running RetroGrab has files open in it,
+        # so this both detects a running app and moves the old files out of the way
+        # without deleting anything yet.
+        for attempt in range(5):
+            try:
+                os.rename(internal, old)
+                break
+            except OSError:
+                if attempt == 4:
+                    sys.exit("RetroGrab (or its login window) is running - close it, then run the build again.")
+                time.sleep(2)
+    for name in ("RetroGrab.exe", "README.txt"):
         p = os.path.join(APP, name)
-        if os.path.isdir(p):
-            shutil.rmtree(p)
-        elif os.path.isfile(p):
+        if os.path.isfile(p):
             os.remove(p)
     for name in os.listdir(built):
         src = os.path.join(built, name)
         (shutil.copytree if os.path.isdir(src) else shutil.copy2)(src, os.path.join(APP, name))
+    shutil.rmtree(old, ignore_errors=True)
     with open(os.path.join(APP, "README.txt"), "w", encoding="utf-8") as f:
         f.write(README)
     print("installed to", APP)

@@ -29,10 +29,14 @@ def main():
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         pass
-    try:  # own taskbar group/icon instead of python's
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("RetroGrab.App")
-    except Exception:
-        pass
+    # No custom AppUserModelID on purpose: the default one (derived from RetroGrab.exe)
+    # matches taskbar pins and shortcuts, so a pinned RetroGrab groups with its window
+    # and keeps the exe's icon.
+    if not getattr(sys, "frozen", False):  # from source, python.exe would steal the taskbar group/icon
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("RetroGrab.Source")
+        except Exception:
+            pass
 
     import updater
     versions = updater.activate()  # must run before yt_dlp / gallery_dl are imported
