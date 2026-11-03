@@ -41,6 +41,12 @@ def main():
     import updater
     versions = updater.activate()  # must run before yt_dlp / gallery_dl are imported
 
+    if "--test-update" in sys.argv:  # hidden: install the latest release over this copy (for testing)
+        import appupdate
+        info = appupdate.check(current="0")
+        appupdate.install_and_restart(appupdate.download(info))
+        sys.exit(0)
+
     if "--selftest" in sys.argv:  # writes a diagnostics report, used when building/troubleshooting
         import json
         import common
