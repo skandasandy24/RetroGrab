@@ -11,7 +11,7 @@ Paste a link, pick your options, hit <b>Download</b>.
 
 - **YouTube** — videos, Shorts, playlists. Video + audio, video only, or audio only. Resolution from 144p to 4K, MP4 / MKV / WebM, MP3 / M4A / Opus / WAV / FLAC, subtitles and thumbnails.
 - **Instagram** — reels, posts and carousels (all photos + videos), or just the audio as MP3.
-- **Spotify** — songs, albums and playlists. Each song is matched on YouTube by title, artist and length, then saved as MP3 / M4A tagged with the Spotify title, artist, album and cover art. *Spotify's own DRM-protected audio is never downloaded.*
+- **Spotify** — songs, albums and playlists. Each song is matched on YouTube by title, artist and length, then saved as MP3 / M4A tagged with the Spotify title, artist, album and cover art. If a song exists in several languages (common for Indian film songs: Tamil / Telugu / Hindi / Kannada / Malayalam …), RetroGrab **asks which language you want**, and can remember the choice for a whole album or playlist. *Spotify's own DRM-protected audio is never downloaded.*
 - Download queue, progress bar, history, and a built-in updater for the download engines.
 
 ## Download & run (no install needed)

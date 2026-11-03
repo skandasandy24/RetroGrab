@@ -57,8 +57,19 @@ def detect_service(url):
 class Reporter:
     """Thread-safe bridge from the worker thread to the UI."""
 
-    def __init__(self, q):
+    def __init__(self, q, cancel=None):
         self.q = q
+        self.cancel = cancel
+
+    def ask_language(self, label, langs, default, multi):
+        """Called from the worker: shows the language dialog and waits for the answer.
+        Returns (language, use_for_rest) or None to skip the song."""
+        done, box = threading.Event(), {}
+        self.q.put(("ask_lang", (label, langs, default, multi, done, box)))
+        while not done.wait(0.2):
+            if self.cancel is not None and self.cancel.is_set():
+                return None
+        return box.get("answer")
 
     def log(self, m):
         self.q.put(("log", m))
@@ -498,7 +509,7 @@ class App:
 
     def work(self):
         import engine
-        rep = Reporter(self.events)
+        rep = Reporter(self.events, self.cancel_event)
         while True:
             job = next((j for j in self.jobs if j["status"] == "Waiting"), None)
             if not job:
@@ -539,6 +550,8 @@ class App:
                     self.now_title.set(data[:95])
                     if self.current:
                         self.current["name"] = data[:80]
+                elif kind == "ask_lang":
+                    self.root.after(0, lambda d=data: self.language_dialog(*d))
                 elif kind == "saved":
                     self.add_history(*data)
                 elif kind == "start":
@@ -571,6 +584,70 @@ class App:
             self.detail.set(detail)
             self.speed.set(speed)
         self.root.after(80, self.poll)
+
+    # ================================================================ language choice
+    def language_dialog(self, label, langs, default, multi, done, box):
+        w = tk.Toplevel(self.root)
+        closed = []
+
+        def finish(answer):
+            if closed:
+                return
+            closed.append(1)
+            box["answer"] = answer
+            done.set()
+            try:
+                w.grab_release()
+            except tk.TclError:
+                pass
+            w.destroy()
+
+        rw = R.RetroWindow(w, "Choose language", lambda: finish(None), minimizable=False)
+        body = tk.Frame(rw.outer, bg=R.GRAY, padx=14, pady=10)
+        body.pack(fill="both", expand=True)
+        R.label(body, "This song is available in more than one language:", anchor="w").pack(fill="x")
+        R.label(body, label[:110], font=R.FONT_B, wraplength=440, justify="left", anchor="w").pack(
+            fill="x", pady=(4, 8))
+        var = tk.StringVar(value=default if default in langs else langs[0])
+        g = R.group(body, "Download it in")
+        g.pack(fill="x")
+        for lang in langs:
+            text = lang.title() + ("      ← as listed on Spotify" if lang == default else "")
+            R.radio(g, text, var, lang).pack(anchor="w")
+        keep = tk.BooleanVar(value=True)
+        if multi:
+            R.check(body, "Use this language for the rest of this album / playlist", keep).pack(anchor="w",
+                                                                                                pady=(8, 0))
+        row = tk.Frame(body, bg=R.GRAY)
+        row.pack(fill="x", pady=(12, 0))
+        R.button(row, "Skip song", lambda: finish(None), width=10).pack(side="right")
+        R.button(row, "Download", lambda: finish((var.get(), multi and keep.get())), width=10,
+                 default="active").pack(side="right", padx=6)
+        w.bind("<Return>", lambda e: finish((var.get(), multi and keep.get())))
+        w.bind("<Escape>", lambda e: finish(None))
+        rw.center(460)
+        w.attributes("-topmost", True)
+
+        def grab():
+            try:
+                w.lift()
+                w.focus_force()
+                w.grab_set()
+            except tk.TclError:
+                pass
+
+        w.after(80, grab)
+
+        def watch_cancel():  # the job was cancelled while the question was open
+            if closed:
+                return
+            if self.cancel_event.is_set():
+                finish(None)
+            else:
+                w.after(300, watch_cancel)
+
+        watch_cancel()
+        self.status.set("Waiting for you to choose a language...")
 
     # ================================================================ history
     def add_history(self, path, service):
