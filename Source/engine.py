@@ -7,7 +7,7 @@ import yt_dlp
 from yt_dlp.utils import DownloadCancelled, sanitize_filename
 
 import spotify
-from common import COOKIES, ffmpeg_location, has_instagram_login, js_runtimes
+from common import ffmpeg_location, has_instagram_login, js_runtimes, load_instagram_session
 
 
 class Cancelled(Exception):
@@ -68,6 +68,8 @@ def base_opts(rep, cancel, folder, on_saved=None):
             if pct is None and d.get("fragment_count"):
                 pct = (d.get("fragment_index") or 0) * 100 / d["fragment_count"]
             kind = "audio" if info.get("vcodec") == "none" else ("video" if info.get("acodec") == "none" else "file")
+            if kind != "audio" and info.get("height"):
+                kind = f"{info['height']}p {kind}"
             rep.progress(pct, f"{(pct or 0):.1f}% of {human_bytes(total)}   ETA {human_time(d.get('eta'))}"
                               f"   ({kind} stream)", human_bytes(d.get("speed")) + "/s" if d.get("speed") else "")
             rep.status("Downloading...")
@@ -133,9 +135,20 @@ def apply_media_choice(opts, mode, fmt, quality):
         opts["merge_output_format"] = fmt
 
 
-def _run_ydl(opts, urls, cancel):
+def _add_cookies(jar, cookies):
+    """Put the (decrypted, in-memory) Instagram session into a cookie jar."""
+    import http.cookiejar
+    for c in cookies:
+        jar.set_cookie(http.cookiejar.Cookie(
+            0, c["name"], c["value"], None, False, c["domain"], True, c["domain"].startswith("."),
+            c.get("path") or "/", True, bool(c.get("secure")), c.get("expires") or None, False, None, None, {}))
+
+
+def _run_ydl(opts, urls, cancel, cookies=None):
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
+            if cookies:
+                _add_cookies(ydl.cookiejar, cookies)
             code = ydl.download(urls)
     except DownloadCancelled:
         raise Cancelled()
@@ -189,8 +202,9 @@ def _gallery_dl(url, folder, rep, cancel):
     gconfig.set(("extractor", "instagram"), "videos", True)
     gconfig.set(("downloader",), "progress", 0.0)
     gconfig.set(("output",), "mode", "null")
-    if has_instagram_login():
-        gconfig.set(("extractor",), "cookies", COOKIES)
+    session = load_instagram_session()
+    if session:  # passed in memory - never written to disk unencrypted
+        gconfig.set(("extractor", "instagram"), "cookies", {c["name"]: c["value"] for c in session})
 
     class Out(goutput.NullOutput):
         def start(self, path):
@@ -222,9 +236,14 @@ def _gallery_dl(url, folder, rep, cancel):
             super().__init__(url, parent)
             self.out = Out()
 
+    login_wall = []
+
     class Handler(logging.Handler):
         def emit(self, record):
-            rep.log(f"[{record.name}] {record.getMessage()}")
+            msg = record.getMessage()
+            if "login" in msg.lower():
+                login_wall.append(msg)
+            rep.log(f"[{record.name}] {msg}")
 
     handler = Handler(logging.INFO)
     logging.getLogger().addHandler(handler)
@@ -239,6 +258,9 @@ def _gallery_dl(url, folder, rep, cancel):
     if Job.count == 0 and status:
         if not has_instagram_login():
             raise JobError("Instagram wants you to log in. Click 'Log in to Instagram' on the Instagram tab.")
+        if login_wall:
+            raise JobError("Instagram didn't accept your login (it may have expired or been logged out). "
+                           "Click 'Log in to Instagram...' again.")
         raise JobError("Instagram download failed - see Tools > Show log.")
     if status & 4:
         raise JobError(f"Saved {Job.count} file(s), but some failed.")
@@ -254,14 +276,12 @@ def run_instagram(job, rep, cancel):
         opts = base_opts(rep, cancel, folder, on_saved=lambda p: rep.saved(p, "Instagram"))
         opts["outtmpl"] = {"default": "%(uploader,channel|instagram).60B - %(title).80B [%(id)s].%(ext)s"}
         opts["noplaylist"] = kind != "profile"
-        if has_instagram_login():
-            opts["cookiefile"] = COOKIES
         if o["ig_mode"] == "Audio only (MP3)":
             apply_media_choice(opts, "Audio only", "mp3", "Best")
         else:
             apply_media_choice(opts, "Video + Audio", "mp4", "Best")
         try:
-            _run_ydl(opts, [url], cancel)
+            _run_ydl(opts, [url], cancel, cookies=load_instagram_session())
             return
         except JobError as e:
             if o["ig_mode"] == "Audio only (MP3)":
@@ -309,12 +329,10 @@ def run_spotify(job, rep, cancel):
                 rep.log(f"Already have: {base}")
                 continue
             try:
-                res = searcher.extract_info(f"ytsearch8:{spotify.search_query(t)}", download=False)
-                entries = [e for e in (res.get("entries") or []) if e and e.get("id")]
-                if not entries:
-                    raise JobError("no YouTube results")
-                best = max(entries, key=lambda e: spotify.score(e, t))
-                rep.log(f"Match for '{label}': {best.get('title')} ({best.get('channel') or best.get('uploader')})")
+                best = spotify.find_match(searcher, t, log=rep.log)
+                if not best:
+                    raise JobError("no matching song found on YouTube")
+                rep.log(f"Match for '{label}': {best.get('title')} ({best.get('channel') or best.get('uploader') or 'YouTube Music'})")
 
                 saved = []
                 opts = base_opts(rep, cancel, folder, on_saved=saved.append)

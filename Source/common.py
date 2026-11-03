@@ -5,7 +5,7 @@ import shutil
 import sys
 
 APP_NAME = "RetroGrab"
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.1.0"
 
 FROZEN = getattr(sys, "frozen", False)
 BASE = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
@@ -36,8 +36,10 @@ if not _writable_dir(DATA):  # e.g. unzipped into Program Files - fall back to t
     os.makedirs(DATA, exist_ok=True)
 
 UPDATES = os.path.join(DATA, "updates")
-COOKIES = os.path.join(DATA, "instagram_cookies.txt")
-WEBVIEW_PROFILE = os.path.join(DATA, "webview")
+IG_SESSION = os.path.join(DATA, "instagram_session.bin")    # encrypted with Windows DPAPI
+LEGACY_COOKIES = os.path.join(DATA, "instagram_cookies.txt")  # plain text, used by 1.0.x - migrated
+WEBVIEW_TEMP = os.path.join(DATA, "login_temp")               # deleted after each login
+LEGACY_WEBVIEW = os.path.join(DATA, "webview")                # persistent profile used by 1.0.x - deleted
 SETTINGS_FILE = os.path.join(DATA, "settings.json")
 HISTORY_FILE = os.path.join(DATA, "history.json")
 DEFAULT_FOLDER = os.path.join(APP_DIR, "Downloads")
@@ -87,9 +89,91 @@ def js_runtimes():
     return {"deno": {}}
 
 
-def has_instagram_login():
+# ---------------------------------------------------------------- Instagram session
+# The session (Instagram's login cookies - never the password) is encrypted with
+# Windows DPAPI before it touches the disk. Only the same Windows user on the same
+# PC can decrypt it; a copied file is useless anywhere else. It never leaves the PC
+# except as cookies sent to instagram.com itself.
+_ENTROPY = b"RetroGrab/instagram-session/v1"
+
+
+def _dpapi(data, protect):
+    import ctypes
+    from ctypes import wintypes
+
+    class BLOB(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    def blob(b):
+        buf = ctypes.create_string_buffer(b, len(b))
+        return BLOB(len(b), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char))), buf
+
+    inp, _k1 = blob(data)
+    ent, _k2 = blob(_ENTROPY)
+    out = BLOB()
+    crypt32 = ctypes.windll.crypt32
+    fn = crypt32.CryptProtectData if protect else crypt32.CryptUnprotectData
+    # (in, description, entropy, reserved, prompt, flags=CRYPTPROTECT_UI_FORBIDDEN, out)
+    if not fn(ctypes.byref(inp), None, ctypes.byref(ent), None, None, 0x1, ctypes.byref(out)):
+        raise OSError("Windows could not " + ("encrypt" if protect else "decrypt") + " the Instagram session")
     try:
-        with open(COOKIES, encoding="utf-8") as f:
-            return "sessionid" in f.read()
+        return ctypes.string_at(out.pbData, out.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(out.pbData)
+
+
+def save_instagram_session(cookies):
+    """cookies: list of {name, value, domain, path, expires, secure}"""
+    blob = _dpapi(json.dumps(cookies).encode("utf-8"), protect=True)
+    tmp = IG_SESSION + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(blob)
+    os.replace(tmp, IG_SESSION)
+
+
+def _migrate_legacy_cookies():
+    """1.0.x kept a plain-text cookie file and a browser profile - encrypt / delete them."""
+    if os.path.isdir(LEGACY_WEBVIEW):
+        shutil.rmtree(LEGACY_WEBVIEW, ignore_errors=True)
+    if not os.path.isfile(LEGACY_COOKIES):
+        return
+    cookies = []
+    try:
+        with open(LEGACY_COOKIES, encoding="utf-8") as f:
+            for line in f:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) == 7 and not line.startswith("#"):
+                    cookies.append({"domain": parts[0], "path": parts[2], "secure": parts[3] == "TRUE",
+                                    "expires": int(parts[4] or 0), "name": parts[5], "value": parts[6]})
+        if cookies:
+            save_instagram_session(cookies)
+    except Exception:
+        pass
+    try:
+        os.remove(LEGACY_COOKIES)
     except OSError:
-        return False
+        pass
+    shutil.rmtree(LEGACY_WEBVIEW, ignore_errors=True)
+
+
+def load_instagram_session():
+    _migrate_legacy_cookies()
+    try:
+        with open(IG_SESSION, "rb") as f:
+            return json.loads(_dpapi(f.read(), protect=False).decode("utf-8"))
+    except Exception:
+        return []
+
+
+def has_instagram_login():
+    return any(c.get("name") == "sessionid" and c.get("value") for c in load_instagram_session())
+
+
+def delete_instagram_session():
+    for p in (IG_SESSION, LEGACY_COOKIES):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    shutil.rmtree(WEBVIEW_TEMP, ignore_errors=True)
+    shutil.rmtree(LEGACY_WEBVIEW, ignore_errors=True)
