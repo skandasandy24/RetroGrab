@@ -210,6 +210,23 @@ class RetroWindow:
     def _hwnd(self):
         return ctypes.windll.user32.GetParent(self.win.winfo_id())
 
+    def _set_window_icon(self):
+        """Give the real (frameless) window the RetroGrab icon for the taskbar and Alt+Tab."""
+        ico = os.path.join(os.path.dirname(ICON_FILE), "retrograb.ico")
+        if not os.path.isfile(ico):
+            return
+        from ctypes import wintypes
+        u32 = ctypes.windll.user32
+        u32.LoadImageW.restype = wintypes.HANDLE
+        u32.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT,
+                                   ctypes.c_int, ctypes.c_int, wintypes.UINT]
+        u32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        hwnd = self._hwnd()
+        for which, cx, cy in ((1, 11, 12), (0, 49, 50)):  # ICON_BIG: SM_CXICON; ICON_SMALL: SM_CXSMICON
+            h = u32.LoadImageW(None, ico, 1, u32.GetSystemMetrics(cx), u32.GetSystemMetrics(cy), 0x10)
+            if h:
+                u32.SendMessageW(hwnd, 0x80, which, h)  # WM_SETICON
+
     def _taskbar(self):
         try:
             hwnd = self._hwnd()
@@ -217,6 +234,13 @@ class RetroWindow:
             ctypes.windll.user32.SetWindowLongW(hwnd, -20, (style & ~0x80) | 0x40000)
             self.win.withdraw()
             self.win.after(10, self.win.deiconify)
+        except Exception:
+            pass
+        self.win.after(60, self._safe_icon)
+
+    def _safe_icon(self):
+        try:
+            self._set_window_icon()
         except Exception:
             pass
 
