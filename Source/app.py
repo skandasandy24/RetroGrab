@@ -195,6 +195,8 @@ class App:
         import appupdate
 
         def run():
+            if not manual:
+                appupdate.cleanup()  # leftovers from a previous update
             try:
                 info = appupdate.check()
                 err = None
