@@ -27,6 +27,11 @@ def vtuple(v):
     return tuple(int(x) for x in re.findall(r"\d+", v or "0")[:4])
 
 
+def cleanup():
+    """Remove leftovers of a finished update (helper script, temp folders)."""
+    shutil.rmtree(WORK, ignore_errors=True)
+
+
 def check(current=APP_VERSION):
     """Returns info about a newer release, or None if this is the latest."""
     req = urllib.request.Request(f"https://api.github.com/repos/{REPO}/releases/latest", headers=UA)
@@ -114,8 +119,9 @@ if not errorlevel 1 (
 robocopy "%NEW%\\_internal" "%APPDIR%\\_internal" /MIR /R:5 /W:1 /NFL /NDL /NJH /NJS /NP >nul
 copy /Y "%NEW%\\RetroGrab.exe" "%APPDIR%\\RetroGrab.exe" >nul
 if exist "%NEW%\\README.txt" copy /Y "%NEW%\\README.txt" "%APPDIR%\\README.txt" >nul
+rmdir /S /Q "{os.path.join(WORK, 'new')}"
 start "" "%APPDIR%\\RetroGrab.exe"
-rmdir /S /Q "%NEW%"
+(goto) 2>nul & del "%~f0"
 """
     with open(bat, "w", encoding="utf-8", newline="\r\n") as f:
         f.write(script)
