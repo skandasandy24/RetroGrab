@@ -33,8 +33,16 @@ Paste a link, pick your options, hit <b>Download</b>.
 | Internet connection | for downloading, obviously |
 | Microsoft Edge WebView2 | **only** for the Instagram login window. Already included in Windows 11 and up-to-date Windows 10. If the login window won't open, install the free [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/). |
 
-### Instagram login
-Most Instagram links need a login. On the Instagram tab, click **Log in to Instagram…**. A small window shows Instagram's real login page, and RetroGrab never sees your password. When you're signed in, the window closes and the session is saved **only on your PC** (`data\` next to the exe). Use **Log out** to delete it.
+### Instagram login: what happens to your account
+Most Instagram links need a login. On the Instagram tab, click **Log in to Instagram…**. The app explains the steps below first (and again any time under **Privacy…**):
+
+1. **You log in on Instagram's own page**, `instagram.com`, inside a private (InPrivate) Microsoft Edge window. Your username and password go only to Instagram. RetroGrab never reads, sees or stores them.
+2. **Only Instagram's session cookie is kept.** This is the same "stay logged in" token your browser keeps. RetroGrab encrypts it with **Windows DPAPI** before writing it to `data\instagram_session.bin`. Only your Windows account on that PC can decrypt it, so a copied file is useless anywhere else.
+3. **The browser window leaves nothing behind.** Its temporary folder is deleted as soon as it closes.
+4. **The session is only ever sent to instagram.com**, to download what you ask for. RetroGrab has no servers, accounts, analytics or telemetry.
+5. **Log out** deletes the session file. For extra safety, Instagram's **Settings > Accounts Center > Password and security > Where you're logged in** can end the session from Instagram's side too.
+
+Don't take our word for it: the login code is short and readable, in [`Source/login.py`](Source/login.py) and the *Instagram session* part of [`Source/common.py`](Source/common.py).
 
 ### When something stops working
 YouTube and Instagram change often. Use **Tools > Check for updates**, then restart. This downloads the latest yt-dlp / gallery-dl from PyPI (checksum-verified) without needing a new exe. **Tools > Show log** shows what went wrong.
@@ -45,7 +53,7 @@ RetroGrab has no accounts, servers, analytics or telemetry. It only talks to the
 
 | Folder | Contents |
 |---|---|
-| `data\` | settings, download history, Instagram session, engine updates |
+| `data\` | settings, download history, a local log (`retrograb.log`), the encrypted Instagram session, engine updates |
 | `Downloads\` | your files, in `YouTube\`, `Instagram\`, `Spotify\` (changeable in the app) |
 
 If the folder isn't writable (e.g. inside Program Files), it falls back to `%APPDATA%\RetroGrab`.

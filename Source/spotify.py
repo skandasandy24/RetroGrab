@@ -5,6 +5,7 @@ metadata (title, artists, length, cover art) is read from Spotify's embed page.
 """
 import json
 import re
+import unicodedata
 import urllib.parse
 import urllib.request
 
@@ -99,12 +100,58 @@ def _words(s):
     return set(re.findall(r"[a-z0-9]+", (s or "").lower()))
 
 
+# Songs from Indian films (and many others) are released in several languages with
+# the same tune and near-identical titles - the language tag is what tells them apart.
+LANGUAGES = {
+    "tamil": "tamil", "telugu": "telugu", "hindi": "hindi", "kannada": "kannada",
+    "malayalam": "malayalam", "marathi": "marathi", "bengali": "bengali", "bangla": "bengali",
+    "punjabi": "punjabi", "gujarati": "gujarati", "odia": "odia", "bhojpuri": "bhojpuri",
+    "urdu": "urdu", "english": "english", "spanish": "spanish", "korean": "korean",
+    "japanese": "japanese", "chinese": "chinese", "french": "french", "arabic": "arabic",
+}
+
+
+def norm(s):
+    """Lowercase, unify quotes/width (Spotify and YouTube differ), keep only words."""
+    s = unicodedata.normalize("NFKC", s or "").lower()
+    s = re.sub(r"[\"'“”‘’`＂]", "", s)
+    return re.sub(r"[^\w]+", " ", s).strip()
+
+
+def languages(text):
+    words = set(norm(text).split())
+    return {LANGUAGES[w] for w in words if w in LANGUAGES}
+
+
+def core_title(title):
+    """'Veezha Veera (From "X") [Tamil]' -> 'veezha veera'"""
+    return norm(re.split(r"\s*[\(\[]|\s+-\s+", title or "", maxsplit=1)[0])
+
+
 def score(entry, track):
-    """Higher is better. Compares a YouTube search result with the Spotify track."""
+    """Higher is better. Compares a YouTube / YouTube Music result with the Spotify track."""
     yt_title = (entry.get("title") or "").lower()
     channel = (entry.get("channel") or entry.get("uploader") or "").lower()
     sp_title = (track["title"] or "").lower()
     s = 0.0
+
+    # exact title (after normalising quotes etc.) is the strongest signal
+    if norm(yt_title) == norm(sp_title):
+        s += 60
+    elif core_title(sp_title) and core_title(sp_title) in norm(yt_title):
+        s += 15
+
+    # language versions: [Tamil] must not become the [Telugu] version
+    want = languages(f"{track['title']} {track.get('album') or ''}")
+    got = languages(yt_title)
+    if want:
+        if got & want:
+            s += 30
+        elif got:
+            s -= 100
+
+    if entry.get("_source") == "ytmusic":
+        s += 10  # official track audio, no video intro/outro
 
     dur = entry.get("duration")
     if dur and track["duration"]:
@@ -112,8 +159,8 @@ def score(entry, track):
         s -= min(diff, 120)
         if diff > 25:
             s -= 40
-    else:
-        s -= 15
+    elif not dur:
+        s -= 5  # unknown here; checked before downloading
 
     for w in BAD_WORDS:
         if re.search(rf"\b{re.escape(w)}\b", yt_title) and w not in sp_title:
@@ -125,9 +172,9 @@ def score(entry, track):
     if "official video" in yt_title or "music video" in yt_title:
         s -= 4  # videos often have intros/outros
 
-    want = _words(sp_title)
-    if want:
-        s += 25 * len(want & _words(yt_title)) / len(want)
+    words = _words(sp_title)
+    if words:
+        s += 25 * len(words & _words(yt_title)) / len(words)
     artists = [a.lower() for a in track["artists"]]
     if artists and any(a in yt_title or a in channel for a in artists):
         s += 15
@@ -136,6 +183,53 @@ def score(entry, track):
 
 def search_query(track):
     return f"{', '.join(track['artists'][:2])} - {track['title']}"
+
+
+def find_match(searcher, track, log=lambda m: None):
+    """Best YouTube video id for a Spotify track, or None.
+
+    Candidates come from YouTube Music's song search (official tracks) and regular
+    YouTube search. If the best one's length is unknown it's looked up, and anything
+    more than 25 s off from Spotify's length is skipped.
+    """
+    q = search_query(track)
+    candidates = []
+    try:
+        res = searcher.extract_info("https://music.youtube.com/search?q=" + urllib.parse.quote(q) + "#songs",
+                                    download=False)
+        for e in (res.get("entries") or [])[:6]:
+            if e and e.get("id"):
+                e["_source"] = "ytmusic"
+                candidates.append(e)
+    except Exception as e:
+        log(f"YouTube Music search failed ({e}); using YouTube only.")
+    try:
+        res = searcher.extract_info(f"ytsearch8:{q}", download=False)
+        candidates += [e for e in (res.get("entries") or []) if e and e.get("id")]
+    except Exception as e:
+        log(f"YouTube search failed: {e}")
+
+    seen, ranked = set(), []
+    for e in sorted(candidates, key=lambda e: score(e, track), reverse=True):
+        if e["id"] not in seen:
+            seen.add(e["id"])
+            ranked.append(e)
+
+    for e in ranked[:4]:
+        if not e.get("duration") and track["duration"]:
+            try:  # look up the real length before trusting it
+                info = searcher.extract_info(f"https://www.youtube.com/watch?v={e['id']}",
+                                             download=False, process=False)
+                e["duration"] = info.get("duration")
+                e.setdefault("channel", info.get("channel"))
+            except Exception:
+                continue
+        if e.get("duration") and track["duration"] and abs(e["duration"] - track["duration"]) > 25:
+            log(f"Skipping '{e.get('title')}' - length {e['duration']}s vs Spotify {track['duration']:.0f}s")
+            continue
+        log(f"Match: {e.get('title')} [{e.get('_source', 'youtube')}]")
+        return e
+    return None
 
 
 def tag_file(path, track, cover_bytes):

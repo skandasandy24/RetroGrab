@@ -12,8 +12,21 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 
 import retro as R
-from common import (APP_NAME, APP_VERSION, COOKIES, DEFAULT_FOLDER, FROZEN, HISTORY_FILE, SETTINGS_FILE,
-                    WEBVIEW_PROFILE, has_instagram_login, load_json, save_json)
+from common import (APP_NAME, APP_VERSION, DATA, DEFAULT_FOLDER, FROZEN, HISTORY_FILE, IG_SESSION, SETTINGS_FILE,
+                    delete_instagram_session, has_instagram_login, load_json, save_json)
+
+IG_PRIVACY = (
+    "How the Instagram login works:\n\n"
+    "• You log in on Instagram's own page (instagram.com) in a private Microsoft Edge window.\n"
+    "• RetroGrab never sees, reads or saves your username or password.\n"
+    "• After you log in, only Instagram's session cookie is kept, encrypted by Windows so it "
+    "only works for your Windows account on this PC. A copied file is useless elsewhere.\n"
+    "• It is only ever sent to instagram.com, to download what you ask for. "
+    "RetroGrab has no servers and sends nothing anywhere else.\n"
+    "• 'Log out' deletes it. The code is open source, so anyone can check this "
+    "(Source\\login.py and common.py).")
+
+LOG_FILE = os.path.join(DATA, "retrograb.log")
 
 MODES = ["Video + Audio", "Video only", "Audio only"]
 VIDEO_FORMATS = ["mp4", "mkv", "webm"]
@@ -158,7 +171,19 @@ class App:
         root.bind("<Control-Return>", lambda e: self.add_jobs())
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         root.after(80, self.poll)
-        root.after(300, self.autofill_clipboard)
+        if "--test-url" in sys.argv:  # hidden: queue a URL through the real UI path (for troubleshooting)
+            url = sys.argv[sys.argv.index("--test-url") + 1]
+            root.after(500, lambda: self._test_url(url))
+        else:
+            root.after(300, self.autofill_clipboard)
+        self.add_log(f"--- {APP_NAME} {APP_VERSION} started {time.strftime('%Y-%m-%d %H:%M:%S')} ---")
+
+    def _test_url(self, url):
+        svc = detect_service(url) or "YouTube"
+        self.show_tab(svc)
+        box = {"YouTube": self.yt_urls, "Instagram": self.ig_urls, "Spotify": self.sp_urls}[svc]
+        box.insert("1.0", url)
+        self.add_jobs()
 
     # ================================================================ panels
     def _url_group(self, parent, label, var_name):
@@ -221,6 +246,7 @@ class App:
         self.ig_logout_btn.pack(side="right")
         self.ig_login_btn = R.button(g, "Log in to Instagram...", self.ig_login)
         self.ig_login_btn.pack(side="right", padx=4)
+        R.button(g, "Privacy...", self.ig_privacy).pack(side="right")
         g = R.group(p, "Options")
         g.pack(fill="x", pady=(6, 0))
         r, _ = self._row(g, "Download:")
@@ -347,6 +373,13 @@ class App:
     # ================================================================ log
     def add_log(self, line):
         self.log_lines.append(line)
+        try:  # local log file for troubleshooting - stays in data\, never uploaded anywhere
+            if os.path.isfile(LOG_FILE) and os.path.getsize(LOG_FILE) > 2_000_000:
+                os.replace(LOG_FILE, LOG_FILE + ".old")
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except OSError:
+            pass
         if len(self.log_lines) > 3000:
             del self.log_lines[:500]
         if self.log_win and self.log_win.winfo_exists():
@@ -584,9 +617,17 @@ class App:
             self.ig_login_label.configure(text="Not logged in. Most Instagram links need a login.", fg="#b00000")
             self.ig_logout_btn.configure(state="disabled")
 
+    def ig_privacy(self):
+        messagebox.showinfo(APP_NAME + " - Instagram privacy", IG_PRIVACY + (
+            "\n\nStatus: " + ("logged in. The encrypted session is in:\n" + IG_SESSION
+                              if has_instagram_login() else "not logged in. Nothing is stored.")))
+
     def ig_login(self):
         self.show_tab("Instagram")
-        cmd = [sys.executable, "--ig-login"] if FROZEN else [sys.executable, os.path.abspath(sys.argv[0]),
+        if not messagebox.askokcancel(APP_NAME + " - Log in to Instagram", IG_PRIVACY +
+                                      "\n\nOpen Instagram's login page now?"):
+            return
+        cmd =[sys.executable, "--ig-login"] if FROZEN else [sys.executable, os.path.abspath(sys.argv[0]),
                                                               "--ig-login"]
         self.ig_login_btn.configure(state="disabled")
         self.ig_login_label.configure(text="Log in using the window that just opened...", fg=R.BLACK)
@@ -610,15 +651,14 @@ class App:
                                           "Windows 10 and 11.)")
 
     def ig_logout(self):
-        if not messagebox.askyesno(APP_NAME, "Log out of Instagram in RetroGrab?"):
+        if not messagebox.askyesno(APP_NAME, "Log out of Instagram in RetroGrab?\n\n"
+                                             "This deletes the saved session from this PC."):
             return
-        for p in (COOKIES,):
-            try:
-                os.remove(p)
-            except OSError:
-                pass
-        shutil.rmtree(WEBVIEW_PROFILE, ignore_errors=True)
+        delete_instagram_session()
         self.refresh_login()
+        messagebox.showinfo(APP_NAME, "Logged out. RetroGrab no longer has any Instagram data on this PC.\n\n"
+                                      "Extra safety: in Instagram, Settings > Accounts Center > Password and "
+                                      "security > Where you're logged in, lets you end that session too.")
 
     # ================================================================ misc
     def check_updates(self):
