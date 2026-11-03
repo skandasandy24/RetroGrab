@@ -1,7 +1,13 @@
-# RetroGrab
+<p align="center">
+  <img src="Source/assets/logo.png" alt="RetroGrab logo" width="180">
+</p>
 
-A Windows 95-style desktop downloader for **YouTube**, **Instagram** and **Spotify** links.
-Paste a link, pick your options, hit **Download**.
+<h1 align="center">RetroGrab</h1>
+
+<p align="center">
+A Windows 95-style desktop downloader for <b>YouTube</b>, <b>Instagram</b> and <b>Spotify</b> links.<br>
+Paste a link, pick your options, hit <b>Download</b>.
+</p>
 
 - **YouTube** — videos, Shorts, playlists. Video + audio, video only, or audio only. Resolution from 144p to 4K, MP4 / MKV / WebM, MP3 / M4A / Opus / WAV / FLAC, subtitles and thumbnails.
 - **Instagram** — reels, posts and carousels (all photos + videos), or just the audio as MP3.
@@ -66,7 +72,7 @@ Source/
   updater.py     engine self-updater (PyPI wheels)
   common.py      paths and helpers
   build.py       PyInstaller build
-  make_icon.py   draws assets/retrograb.ico
+  make_icon.py   turns assets/logo_source.png into logo.png, retrograb.ico, titlebar.png
   vendor/        ffmpeg + JS runtime bundled into the exe (filled by build.py)
 Archive/      the first, simpler yt-dlp front-end
 ```

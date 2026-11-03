@@ -1,6 +1,11 @@
 """Windows 95 style widgets for Tkinter."""
 import ctypes
+import os
+import sys
 import tkinter as tk
+
+ICON_FILE = os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__))),
+                         "assets", "titlebar.png")
 
 GRAY = "#c0c0c0"
 DARK = "#808080"
@@ -177,12 +182,14 @@ class RetroWindow:
             bar.coords(holder, e.width - 3, 3)
 
         bar.bind("<Configure>", paint)
-        # little app icon: monitor with down arrow
-        bar.create_rectangle(4, 4, 18, 15, fill=GRAY, outline=BLACK)
-        bar.create_rectangle(6, 6, 16, 13, fill="#008080", outline="")
-        bar.create_polygon(9, 7, 13, 7, 13, 9, 15, 9, 11, 13, 7, 9, 9, 9, fill="#ffff00", outline="")
-        bar.create_rectangle(8, 16, 14, 18, fill=GRAY, outline=BLACK)
-        bar.create_text(24, 11, text=title, anchor="w", fill=WHITE, font=FONT_B)
+        # app logo in the title bar (falls back to nothing if the file is missing)
+        self._icon = None
+        try:
+            self._icon = tk.PhotoImage(master=win, file=ICON_FILE)
+            bar.create_image(3, 11, image=self._icon, anchor="w")
+        except (tk.TclError, OSError):
+            pass
+        bar.create_text(25, 11, text=title, anchor="w", fill=WHITE, font=FONT_B)
 
         items = [("_", self.minimize)] if minimizable else []
         items += [("✕", on_close)]

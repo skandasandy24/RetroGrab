@@ -92,6 +92,13 @@ def pyinstaller():
 def install_app(built):
     """Replace the program files in App\\ but keep App\\data (settings, history, login)."""
     os.makedirs(APP, exist_ok=True)
+    exe = os.path.join(APP, "RetroGrab.exe")
+    if os.path.isfile(exe):  # renaming fails if the app is running - check before deleting anything
+        try:
+            os.rename(exe, exe + ".check")
+            os.rename(exe + ".check", exe)
+        except OSError:
+            sys.exit("RetroGrab is running - close it, then run the build again.")
     for name in ("_internal", "RetroGrab.exe", "README.txt"):
         p = os.path.join(APP, name)
         if os.path.isdir(p):
