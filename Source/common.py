@@ -5,7 +5,7 @@ import shutil
 import sys
 
 APP_NAME = "RetroGrab"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 FROZEN = getattr(sys, "frozen", False)
 BASE = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))

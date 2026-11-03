@@ -149,6 +149,8 @@ def score(entry, track):
             s += 30
         elif got:
             s -= 100
+        elif track.get("_strict_lang"):
+            s -= 60  # user picked a language: unlabelled uploads can't be trusted to be it
 
     if entry.get("_source") == "ytmusic":
         s += 10  # official track audio, no video intro/outro
@@ -185,35 +187,108 @@ def search_query(track):
     return f"{', '.join(track['artists'][:2])} - {track['title']}"
 
 
-def find_match(searcher, track, log=lambda m: None):
-    """Best YouTube video id for a Spotify track, or None.
+_LANG_TAG = re.compile(r"\s*[\[\(]\s*(" + "|".join(LANGUAGES) + r")(?:\s+version)?\s*[\]\)]", re.I)
 
-    Candidates come from YouTube Music's song search (official tracks) and regular
-    YouTube search. If the best one's length is unknown it's looked up, and anything
-    more than 25 s off from Spotify's length is skipped.
-    """
-    q = search_query(track)
-    candidates = []
+
+def strip_language(title):
+    """'Song (From "X") [Tamil]' -> 'Song (From "X")'"""
+    return _LANG_TAG.sub("", title or "").strip()
+
+
+def with_language(track, lang):
+    """Copy of the track asking for a specific language version (results must be labelled with it)."""
+    t = dict(track)
+    t["title"] = f"{strip_language(track['title'])} [{lang.title()}]"
+    t["album"] = strip_language(track.get("album") or "") or None
+    t["_strict_lang"] = True
+    return t
+
+
+def _ytm_search(searcher, query, n, log):
     try:
-        res = searcher.extract_info("https://music.youtube.com/search?q=" + urllib.parse.quote(q) + "#songs",
+        res = searcher.extract_info("https://music.youtube.com/search?q=" + urllib.parse.quote(query) + "#songs",
                                     download=False)
-        for e in (res.get("entries") or [])[:6]:
-            if e and e.get("id"):
-                e["_source"] = "ytmusic"
-                candidates.append(e)
     except Exception as e:
-        log(f"YouTube Music search failed ({e}); using YouTube only.")
+        log(f"YouTube Music search failed ({e}).")
+        return []
+    out = []
+    for e in (res.get("entries") or [])[:n]:
+        if e and e.get("id"):
+            e["_source"] = "ytmusic"
+            out.append(e)
+    return out
+
+
+def _merge(*lists):
+    seen, unique = set(), []
+    for lst in lists:
+        for e in lst:
+            if e["id"] not in seen:
+                seen.add(e["id"])
+                unique.append(e)
+    return unique
+
+
+def spotify_language(track):
+    langs = languages(f"{track['title']} {track.get('album') or ''}")
+    return next(iter(langs)) if len(langs) == 1 else None
+
+
+def gather(searcher, track, log=lambda m: None):
+    """Search YouTube Music (official tracks) + YouTube. The YouTube Music search leaves
+    out the language tag so that every language version of the song shows up."""
+    plain = dict(track, title=strip_language(track["title"]))
+    lists = [_ytm_search(searcher, search_query(plain), 10, log)]
+    if plain["title"] != track["title"]:
+        lists.append(_ytm_search(searcher, search_query(track), 5, log))
     try:
-        res = searcher.extract_info(f"ytsearch8:{q}", download=False)
-        candidates += [e for e in (res.get("entries") or []) if e and e.get("id")]
+        res = searcher.extract_info(f"ytsearch8:{search_query(track)}", download=False)
+        lists.append([e for e in (res.get("entries") or []) if e and e.get("id")])
     except Exception as e:
         log(f"YouTube search failed: {e}")
+    return _merge(*lists)
 
-    seen, ranked = set(), []
-    for e in sorted(candidates, key=lambda e: score(e, track), reverse=True):
-        if e["id"] not in seen:
-            seen.add(e["id"])
-            ranked.append(e)
+
+def find_language_version(searcher, track, lang, candidates, log=lambda m: None):
+    """Best match for the chosen language - searches for that version specifically too."""
+    t = with_language(track, lang)
+    extra = _ytm_search(searcher, search_query(t), 5, log)
+    return find_match(searcher, t, log, candidates=_merge(extra, candidates))
+
+
+def available_languages(candidates, track):
+    """Languages this song is offered in, judged from results that look like the same song
+    (similar title - 'Veezha Veera' vs 'Veera Veera' - or the same film, and similar length)."""
+    want = _words(core_title(track["title"]))
+    film = re.search(r"\(from\s+(.+?)\)", norm_quotes(track["title"]), re.I)
+    found = set()
+    for e in candidates:
+        title = e.get("title") or ""
+        langs = languages(title)
+        if len(langs) != 1:
+            continue
+        if e.get("duration") and track["duration"] and abs(e["duration"] - track["duration"]) > 25:
+            continue
+        same_title = want and len(want & _words(core_title(title))) / len(want) >= 0.5
+        same_film = film and norm(film.group(1)) in norm(title)
+        if same_title and (same_film or not film):
+            found |= langs
+    return sorted(found)
+
+
+def norm_quotes(s):
+    return unicodedata.normalize("NFKC", s or "").replace("＂", '"')
+
+
+def find_match(searcher, track, log=lambda m: None, candidates=None):
+    """Best YouTube video for a Spotify track, or None.
+
+    Ranks the candidates against the track. If the best one's length is unknown it's
+    looked up, and anything more than 25 s off from Spotify's length is skipped.
+    """
+    if candidates is None:
+        candidates = gather(searcher, track, log)
+    ranked = sorted(candidates, key=lambda e: score(e, track), reverse=True)
 
     for e in ranked[:4]:
         if not e.get("duration") and track["duration"]:
@@ -222,8 +297,10 @@ def find_match(searcher, track, log=lambda m: None):
                                              download=False, process=False)
                 e["duration"] = info.get("duration")
                 e.setdefault("channel", info.get("channel"))
-            except Exception:
-                continue
+            except Exception as ex:
+                # e.g. YouTube's temporary "confirm you're not a bot" - keep the
+                # candidate and rely on its title/language score instead
+                log(f"Couldn't check the length of '{e.get('title')}' ({str(ex)[:80]}); using it anyway.")
         if e.get("duration") and track["duration"] and abs(e["duration"] - track["duration"]) > 25:
             log(f"Skipping '{e.get('title')}' - length {e['duration']}s vs Spotify {track['duration']:.0f}s")
             continue

@@ -315,21 +315,46 @@ def run_spotify(job, rep, cancel):
     search_opts = {"logger": YDLLogger(rep), "quiet": True, "extract_flat": "in_playlist",
                    "js_runtimes": js_runtimes(), "noprogress": True}
     failed = []
+    remembered = None  # language picked with "use for the rest of this album/playlist"
+    ask = getattr(rep, "ask_language", None)
     with yt_dlp.YoutubeDL(search_opts) as searcher:
         for i, t in enumerate(tracks, 1):
             if cancel.is_set():
                 raise Cancelled()
             label = f"{', '.join(t['artists'])} - {t['title']}"
             rep.title(f"[{i}/{len(tracks)}] {label}")
-            rep.progress(0, "Searching YouTube for the best match...", "")
+            rep.progress(None, "Searching YouTube for the best match...", "")
             rep.status(f"Song {i} of {len(tracks)}")
-            base = sanitize_filename(label)[:180]
-            target = os.path.join(folder, f"{base}.{fmt}")
-            if o.get("skip_existing") and os.path.exists(target):
-                rep.log(f"Already have: {base}")
-                continue
             try:
-                best = spotify.find_match(searcher, t, log=rep.log)
+                candidates = spotify.gather(searcher, t, log=rep.log)
+                langs = spotify.available_languages(candidates, t)
+                if len(langs) >= 2:
+                    rep.log(f"'{label}' is available in: {', '.join(l.title() for l in langs)}")
+                    if remembered in langs:
+                        lang = remembered
+                    elif ask:
+                        answer = ask(label, langs, spotify.spotify_language(t), len(tracks) > 1)
+                        if cancel.is_set():
+                            raise Cancelled()
+                        if not answer:
+                            rep.log(f"Skipped (no language chosen): {label}")
+                            continue
+                        lang, keep = answer
+                        if keep:
+                            remembered = lang
+                    else:
+                        lang = spotify.spotify_language(t) or langs[0]
+                    rep.log(f"Language for '{label}': {lang.title()}")
+                    best = spotify.find_language_version(searcher, t, lang, candidates, log=rep.log)
+                    t = dict(t, title=spotify.with_language(t, lang)["title"])
+                    label = f"{', '.join(t['artists'])} - {t['title']}"
+                else:
+                    best = spotify.find_match(searcher, t, log=rep.log, candidates=candidates)
+                base = sanitize_filename(label)[:180]
+                target = os.path.join(folder, f"{base}.{fmt}")
+                if o.get("skip_existing") and os.path.exists(target):
+                    rep.log(f"Already have: {base}")
+                    continue
                 if not best:
                     raise JobError("no matching song found on YouTube")
                 rep.log(f"Match for '{label}': {best.get('title')} ({best.get('channel') or best.get('uploader') or 'YouTube Music'})")
