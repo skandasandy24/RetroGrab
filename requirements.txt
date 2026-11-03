@@ -1,0 +1,8 @@
+# Runtime
+yt-dlp[default]>=2026.10.26
+gallery-dl>=1.32
+pywebview>=6.0
+mutagen>=1.47
+
+# Building the .exe (build.bat)
+pyinstaller>=6.10

@@ -1,0 +1,80 @@
+# RetroGrab
+
+A Windows 95-style desktop downloader for **YouTube**, **Instagram** and **Spotify** links.
+Paste a link, pick your options, hit **Download**.
+
+- **YouTube** — videos, Shorts, playlists. Video + audio, video only, or audio only. Resolution from 144p to 4K, MP4 / MKV / WebM, MP3 / M4A / Opus / WAV / FLAC, subtitles and thumbnails.
+- **Instagram** — reels, posts and carousels (all photos + videos), or just the audio as MP3.
+- **Spotify** — songs, albums and playlists. Each song is matched on YouTube by title, artist and length, then saved as MP3 / M4A tagged with the Spotify title, artist, album and cover art. *Spotify's own DRM-protected audio is never downloaded.*
+- Download queue, progress bar, history, and a built-in updater for the download engines.
+
+## Download & run (no install needed)
+
+1. Go to [**Releases**](../../releases/latest) and download `RetroGrab-x.x.x-win64.zip`.
+2. Unzip the whole folder somewhere you can write to (Documents, Desktop, `D:\` …). Don't run it from inside the zip.
+3. Double-click **`RetroGrab.exe`**. For a Desktop shortcut: right-click it, then **Send to > Desktop (create shortcut)**.
+4. If Windows shows *"Windows protected your PC"*, click **More info**, then **Run anyway**. This appears for any app that isn't code-signed.
+
+Everything the app needs (Python, ffmpeg, a JavaScript runtime) is bundled. Windows 10 or 11, 64-bit.
+
+### Instagram login
+Most Instagram links need a login. On the Instagram tab, click **Log in to Instagram…**. A small window shows Instagram's real login page, and RetroGrab never sees your password. When you're signed in, the window closes and the session is saved **only on your PC** (`data\` next to the exe). Use **Log out** to delete it.
+
+### When something stops working
+YouTube and Instagram change often. Use **Tools > Check for updates**, then restart. This downloads the latest yt-dlp / gallery-dl from PyPI (checksum-verified) without needing a new exe. **Tools > Show log** shows what went wrong.
+
+## Your data stays on your PC
+
+RetroGrab has no accounts, servers, analytics or telemetry. It only talks to the sites you paste links from, plus PyPI when you check for updates. Everything it stores lives next to the program:
+
+| Folder | Contents |
+|---|---|
+| `data\` | settings, download history, Instagram session, engine updates |
+| `Downloads\` | your files, in `YouTube\`, `Instagram\`, `Spotify\` (changeable in the app) |
+
+If the folder isn't writable (e.g. inside Program Files), it falls back to `%APPDATA%\RetroGrab`.
+None of these are ever included in this repo or in the release zip.
+
+## Run or build from source
+
+Needs [Python 3.10+](https://www.python.org/downloads/) (tick *Add python.exe to PATH*).
+
+```bat
+git clone <this repo>
+cd RetroGrab
+setup.bat      :: installs Python packages + ffmpeg + Deno (via winget) if missing
+:: open a NEW terminal window so ffmpeg/deno are on PATH, then:
+run.bat        :: start from source
+build.bat      :: make App\RetroGrab.exe and Release\RetroGrab-x.x.x-win64.zip
+```
+
+When running from source, data goes in `Source\.devdata\` (git-ignored).
+
+## Project layout
+
+```
+App/          built program (RetroGrab.exe + _internal, and data/)  - created by build.bat
+Downloads/    your downloads                                        - git-ignored
+Release/      shareable zip                                         - created by build.bat
+Source/
+  retrograb.py   entry point (+ --ig-login, --selftest [full])
+  app.py         main window: tabs, queue, history
+  retro.py       Win95 widgets (title bar, tabs, block progress bar)
+  engine.py      YouTube / Instagram / Spotify download logic
+  spotify.py     Spotify metadata, YouTube matching, tagging
+  login.py       Instagram login window (WebView2)
+  updater.py     engine self-updater (PyPI wheels)
+  common.py      paths and helpers
+  build.py       PyInstaller build
+  make_icon.py   draws assets/retrograb.ico
+  vendor/        ffmpeg + JS runtime bundled into the exe (filled by build.py)
+Archive/      the first, simpler yt-dlp front-end
+```
+
+## Please download responsibly
+
+Only download content you own or have permission to save. Downloading from YouTube or Instagram, or saving music, may break those sites' terms of service and copyright law where you live. You are responsible for how you use this tool.
+
+## Built on
+
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) · [gallery-dl](https://github.com/mikf/gallery-dl) · [FFmpeg](https://ffmpeg.org) · [pywebview](https://pywebview.flowrl.com) · [mutagen](https://github.com/quodlibet/mutagen) · [PyInstaller](https://pyinstaller.org)

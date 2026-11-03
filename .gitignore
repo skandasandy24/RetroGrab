@@ -1,0 +1,32 @@
+# ---- Personal data: NEVER commit ----
+App/data/
+Source/.devdata/
+**/data/settings.json
+**/data/history.json
+**/instagram_cookies.txt
+**/webview/
+**/selftest.json
+Downloads/
+*.cookies.txt
+cookies.txt
+
+# ---- Build output (too big for git - published as a GitHub Release instead) ----
+App/
+Release/
+Source/build/
+Source/dist/
+*.spec
+*.zip
+
+# ---- Bundled third-party programs (copied in by build.py) ----
+Source/vendor/*
+!Source/vendor/README.md
+
+# ---- Python / OS junk ----
+__pycache__/
+*.py[cod]
+*.tmp
+.venv/
+venv/
+Thumbs.db
+desktop.ini
