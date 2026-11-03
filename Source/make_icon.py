@@ -1,52 +1,81 @@
-"""Draws the RetroGrab pixel-art icon (monitor + yellow download arrow) -> assets/retrograb.ico"""
+"""Builds the RetroGrab icons from assets/logo_source.png.
+
+- Removes the flat background (flood fill from the edges; the logo's black outline stops it)
+- Crops to the logo, pads to a square
+Outputs (in assets/):
+    logo.png          512x512 transparent - README / GitHub
+    retrograb.ico     16..256 px          - the .exe, shortcuts, taskbar
+    titlebar.png      small               - the in-app title bar
+"""
 import os
+from collections import deque
 
-from PIL import Image
+from PIL import Image, ImageFilter
 
-ART = [
-    "................................",
-    "................................",
-    "..KKKKKKKKKKKKKKKKKKKKKKKKKKKK..",
-    "..KWWWWWWWWWWWWWWWWWWWWWWWWWGK..",
-    "..KWGGGGGGGGGGGGGGGGGGGGGGGGDK..",
-    "..KWGDDDDDDDDDDDDDDDDDDDDDDWGDK.",
-    "..KWGDTTTTTTTTTTTTTTTTTTTTWGDK..",
-    "..KWGDTTTTTTTTTYYYYTTTTTTTWGDK..",
-    "..KWGDTTTTTTTTTYYYYTTTTTTTWGDK..",
-    "..KWGDTTTTTTTTTYYYYTTTTTTTWGDK..",
-    "..KWGDTTTTTTTTTYYYYTTTTTTTWGDK..",
-    "..KWGDTTTTTTTTTYYYYTTTTTTTWGDK..",
-    "..KWGDTTTTTTTYYYYYYYYTTTTTWGDK..",
-    "..KWGDTTTTTTTTYYYYYYTTTTTTWGDK..",
-    "..KWGDTTTTTTTTTYYYYTTTTTTTWGDK..",
-    "..KWGDTTTTTTTTTTYYTTTTTTTTWGDK..",
-    "..KWGDTTTTTTTTTTTTTTTTTTTTWGDK..",
-    "..KWGDTTTTTTYYYYYYYYYYTTTTWGDK..",
-    "..KWGDTTTTTTTTTTTTTTTTTTTTWGDK..",
-    "..KWGDWWWWWWWWWWWWWWWWWWWWWGDK..",
-    "..KWGGGGGGGGGGGGGGGGGGGGGGGGDK..",
-    "..KWGGGGGGGGGGGGGGGGGGGRRGGGDK..",
-    "..KDDDDDDDDDDDDDDDDDDDDDDDDDDK..",
-    "..KKKKKKKKKKKKKKKKKKKKKKKKKKKK..",
-    "...........KGGGGGGGGK...........",
-    "...........KDDDDDDDDK...........",
-    "......KKKKKKKKKKKKKKKKKKKK......",
-    "......KWWWWWWWWWWWWWWWWWWK......",
-    "......KGGGGGGGGGGGGGGGGGDK......",
-    "......KKKKKKKKKKKKKKKKKKKK......",
-    "................................",
-    "................................",
-]
-COLORS = {".": (0, 0, 0, 0), "K": (0, 0, 0, 255), "W": (255, 255, 255, 255), "G": (192, 192, 192, 255),
-          "D": (128, 128, 128, 255), "T": (0, 128, 128, 255), "Y": (255, 255, 0, 255), "R": (0, 200, 0, 255)}
+HERE = os.path.dirname(os.path.abspath(__file__))
+ASSETS = os.path.join(HERE, "assets")
+SRC = os.path.join(ASSETS, "logo_source.png")
+TOLERANCE = 38  # how far from the background colour still counts as background
 
-img = Image.new("RGBA", (32, 32))
-for y, row in enumerate(ART):
-    for x, ch in enumerate(row[:32]):
-        img.putpixel((x, y), COLORS[ch])
-big = img.resize((256, 256), Image.NEAREST)
-out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "retrograb.ico")
-os.makedirs(os.path.dirname(out), exist_ok=True)
-big.save(out, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
-big.save(out.replace(".ico", ".png"))
-print("wrote", out)
+
+def remove_background(img):
+    img = img.convert("RGBA")
+    w, h = img.size
+    px = img.load()
+    corners = [px[0, 0], px[w - 1, 0], px[0, h - 1], px[w - 1, h - 1]]
+    bg = tuple(sum(c[i] for c in corners) // 4 for i in range(3))
+
+    def is_bg(p):
+        return sum(abs(p[i] - bg[i]) for i in range(3)) <= TOLERANCE
+
+    mask = Image.new("L", (w, h), 255)
+    m = mask.load()
+    seen = bytearray(w * h)
+    q = deque()
+    for x in range(w):
+        q.extend(((x, 0), (x, h - 1)))
+    for y in range(h):
+        q.extend(((0, y), (w - 1, y)))
+    while q:
+        x, y = q.popleft()
+        i = y * w + x
+        if seen[i]:
+            continue
+        seen[i] = 1
+        if not is_bg(px[x, y]):
+            continue
+        m[x, y] = 0
+        if x > 0: q.append((x - 1, y))
+        if x < w - 1: q.append((x + 1, y))
+        if y > 0: q.append((x, y - 1))
+        if y < h - 1: q.append((x, y + 1))
+    # soften the cut edge slightly so it doesn't look jagged when scaled
+    mask = mask.filter(ImageFilter.MinFilter(3)).filter(ImageFilter.GaussianBlur(0.8))
+    img.putalpha(mask)
+    return img
+
+
+def square_crop(img, pad_ratio=0.03):
+    box = img.getchannel("A").point(lambda a: 255 if a > 40 else 0).getbbox()
+    img = img.crop(box)
+    side = int(max(img.size) * (1 + 2 * pad_ratio))
+    canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+    canvas.paste(img, ((side - img.width) // 2, (side - img.height) // 2), img)
+    return canvas
+
+
+def main():
+    logo = square_crop(remove_background(Image.open(SRC)))
+    logo.resize((512, 512), Image.LANCZOS).save(os.path.join(ASSETS, "logo.png"), optimize=True)
+    big = logo.resize((256, 256), Image.LANCZOS)
+    big.save(os.path.join(ASSETS, "retrograb.ico"),
+             sizes=[(16, 16), (20, 20), (24, 24), (32, 32), (40, 40), (48, 48), (64, 64), (128, 128), (256, 256)])
+    logo.resize((18, 18), Image.LANCZOS).save(os.path.join(ASSETS, "titlebar.png"))
+    old = os.path.join(ASSETS, "retrograb.png")
+    if os.path.exists(old):
+        os.remove(old)
+    print("icons written to", ASSETS)
+
+
+if __name__ == "__main__":
+    main()
