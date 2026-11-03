@@ -44,12 +44,18 @@ Most Instagram links need a login. On the Instagram tab, click **Log in to Insta
 
 Don't take our word for it: the login code is short and readable, in [`Source/login.py`](Source/login.py) and the *Instagram session* part of [`Source/common.py`](Source/common.py).
 
-### When something stops working
-YouTube and Instagram change often. Use **Tools > Check for updates**, then restart. This downloads the latest yt-dlp / gallery-dl from PyPI (checksum-verified) without needing a new exe. **Tools > Show log** shows what went wrong.
+### Updates
+- **New RetroGrab versions:** when you open the app it checks GitHub. If there's a new release, it shows what's new and offers **Update now**. That downloads the release, verifies its SHA-256 checksum, swaps in the new program files (your `data\` and `Downloads\` are kept) and restarts. You can also use **Help > Check for RetroGrab updates**.
+- **When a site stops working:** YouTube and Instagram change often. Use **Tools > Update download engines**, then restart. This gets the latest yt-dlp / gallery-dl from PyPI (checksum-verified) without needing a new RetroGrab version. **Tools > Show log** shows what went wrong.
 
 ## Your data stays on your PC
 
-RetroGrab has no accounts, servers, analytics or telemetry. It only talks to the sites you paste links from, plus PyPI when you check for updates. Everything it stores lives next to the program:
+RetroGrab has no accounts, servers, analytics or telemetry. It only talks to:
+- the sites you paste links from;
+- **GitHub**, once at startup, to see if a newer RetroGrab release exists. It sends nothing but the app version in its user-agent;
+- **PyPI**, when you choose *Tools > Update download engines*.
+
+Everything it stores lives next to the program:
 
 | Folder | Contents |
 |---|---|

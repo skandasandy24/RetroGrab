@@ -187,7 +187,119 @@ class App:
             root.after(500, lambda: self._test_url(url))
         else:
             root.after(300, self.autofill_clipboard)
+            root.after(2500, self.check_app_update)
         self.add_log(f"--- {APP_NAME} {APP_VERSION} started {time.strftime('%Y-%m-%d %H:%M:%S')} ---")
+
+    # ================================================================ app updates
+    def check_app_update(self, manual=False):
+        import appupdate
+
+        def run():
+            try:
+                info = appupdate.check()
+                err = None
+            except Exception as e:
+                info, err = None, e
+            self.root.after(0, lambda: self._app_update_result(info, err, manual))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _app_update_result(self, info, err, manual):
+        if err:
+            self.add_log(f"Update check failed: {err}")
+            if manual:
+                messagebox.showinfo(APP_NAME, f"Couldn't check for updates (no internet?).\n\n{err}")
+            return
+        if not info:
+            if manual:
+                messagebox.showinfo(APP_NAME, f"You have the latest version ({APP_VERSION}).")
+            return
+        if not manual and self.s.get("skip_version") == info["version"]:
+            return
+        self.add_log(f"Update available: {APP_VERSION} -> {info['version']}")
+        self.update_dialog(info)
+
+    def update_dialog(self, info):
+        import appupdate
+        import webbrowser
+
+        w = tk.Toplevel(self.root)
+        rw = R.RetroWindow(w, "Update available", w.destroy, minimizable=False)
+        body = tk.Frame(rw.outer, bg=R.GRAY, padx=14, pady=10)
+        body.pack(fill="both", expand=True)
+        R.label(body, f"A new version of RetroGrab is available!", font=R.FONT_B, anchor="w").pack(fill="x")
+        R.label(body, f"You have {APP_VERSION}.  New: {info['version']}  ({info['title']})", anchor="w").pack(
+            fill="x", pady=(2, 8))
+        wrap = tk.Frame(body, bg=R.GRAY, relief="sunken", bd=2)
+        wrap.pack(fill="both", expand=True)
+        notes = tk.Text(wrap, width=64, height=10, font=R.FONT, bg=R.WHITE, bd=0, wrap="word",
+                        highlightthickness=0)
+        notes.insert("1.0", re.sub(r"[*`]", "", info["notes"]) or "No release notes.")
+        notes.configure(state="disabled")
+        notes.pack(fill="both", expand=True, padx=4, pady=4)
+        skip = tk.BooleanVar(value=False)
+        R.check(body, "Don't remind me about this version", skip).pack(anchor="w", pady=(6, 0))
+        status = tk.StringVar(value="Your settings, history, Instagram login and downloads are kept.")
+        R.label(body, textvariable=status, fg=R.DARK, anchor="w").pack(fill="x", pady=(4, 0))
+        row = tk.Frame(body, bg=R.GRAY)
+        row.pack(fill="x", pady=(8, 0))
+
+        def later():
+            if skip.get():
+                self.s["skip_version"] = info["version"]
+                self.persist()
+            w.destroy()
+
+        def open_page():
+            webbrowser.open(info["page"])
+            later()
+
+        def update_now():
+            if self.current:
+                messagebox.showinfo(APP_NAME, "Wait for the current download to finish, then update.", parent=w)
+                return
+            for b in buttons:
+                b.configure(state="disabled")
+
+            def progress(done, total):
+                txt = f"Downloading update... {done * 100 // total}%" if total else "Downloading update..."
+                self.root.after(0, lambda: status.set(txt))
+
+            def run():
+                try:
+                    new_dir = appupdate.download(info, progress)
+                    self.root.after(0, lambda: finish(new_dir))
+                except Exception as e:
+                    self.root.after(0, lambda: failed(e))
+
+            threading.Thread(target=run, daemon=True).start()
+
+        def finish(new_dir):
+            status.set("Installing... RetroGrab will restart by itself.")
+            self.persist()
+            appupdate.install_and_restart(new_dir)
+            self.root.after(300, self.root.destroy)
+
+        def failed(e):
+            self.add_log(f"Update failed: {e}")
+            status.set(f"Update failed: {str(e)[:90]}")
+            for b in buttons:
+                b.configure(state="normal")
+
+        buttons = []
+        b = R.button(row, "Later", later, width=9)
+        b.pack(side="right")
+        buttons.append(b)
+        b = R.button(row, "Open download page", open_page)
+        b.pack(side="right", padx=6)
+        buttons.append(b)
+        if appupdate.can_install(info):
+            b = R.button(row, "Update now", update_now, width=11, default="active")
+            b.pack(side="right")
+            buttons.append(b)
+        rw.center(520)
+        w.attributes("-topmost", True)
+        w.after(80, lambda: (w.lift(), w.focus_force()))
 
     def _test_url(self, url):
         svc = detect_service(url) or "YouTube"
@@ -308,10 +420,12 @@ class App:
         mb.pack(fill="x", padx=2)
         menus = (
             ("File", [("Open downloads folder", self.open_folder), ("-", None), ("Exit", self.on_close)]),
-            ("Tools", [("Show log...", self.show_log), ("Check for updates...", self.check_updates),
+            ("Tools", [("Show log...", self.show_log), ("Update download engines...", self.check_updates),
                        ("-", None), ("Log in to Instagram...", self.ig_login),
                        ("Log out of Instagram", self.ig_logout)]),
-            ("Help", [("How to use", self.help), ("About...", self.about)]),
+            ("Help", [("How to use", self.help), ("Check for RetroGrab updates...",
+                                                   lambda: self.check_app_update(manual=True)),
+                      ("-", None), ("About...", self.about)]),
         )
         for name, items in menus:
             m = tk.Menubutton(mb, text=name, font=R.FONT, bg=R.GRAY, activebackground=R.NAVY,
