@@ -70,9 +70,13 @@ def main():
                 def progress(self, *a): pass
                 def saved(self, p, s): self.files.append(p)
 
+            try:
+                report["qualities"] = engine.video_qualities("https://www.youtube.com/watch?v=jNQXAC9IVRw")
+            except Exception as e:
+                report["qualities"] = f"FAILED: {e}"
             for svc, url, o in (
                 ("YouTube", "https://www.youtube.com/watch?v=jNQXAC9IVRw",
-                 {"mode": "Video + Audio", "quality": "240p", "fmt": "mp4", "thumb": True}),
+                 {"mode": "Video + Audio", "quality": "144p", "height_limit": 144, "fmt": "mp4", "thumb": True}),
                 ("Spotify", "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT",
                  {"fmt": "mp3", "quality": "128 kbps", "subfolder": False, "skip_existing": False}),
             ):
