@@ -13,6 +13,7 @@ Paste a link, pick your options, hit <b>Download</b>.
 - **Instagram** — reels, posts and carousels (all photos + videos), or just the audio as MP3.
 - **Spotify** — songs, albums and playlists. Each song is matched on YouTube by title, artist and length, then saved as MP3 / M4A tagged with the Spotify title, artist, album and cover art. If a song exists in several languages (common for Indian film songs: Tamil / Telugu / Hindi / Kannada / Malayalam …), RetroGrab **asks which language you want**, and can remember the choice for a whole album or playlist. *Spotify's own DRM-protected audio is never downloaded.*
 - Paste any link and RetroGrab switches to the right tab by itself. For a single YouTube video, it only lists the qualities that video really has.
+- Six themes under **View**: Classic 95, XP, 7, 8, 10 and 11, with dark mode on 10 and 11. Your choice is remembered.
 - Download queue, progress bar, history, and a built-in updater for the download engines.
 
 ## Download & run (no install needed)
