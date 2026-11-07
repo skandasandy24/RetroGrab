@@ -102,6 +102,8 @@ class App:
         self.log_lines = []
         self.log_win = None
 
+        self.theme_var = tk.StringVar(value=self.s.get("theme", "Classic 95"))
+        self.dark = bool(self.s.get("dark", False))
         root.title(APP_NAME)
         self.frame = R.RetroWindow(root, f"{APP_NAME} - YouTube / Instagram / Spotify Downloader", self.on_close)
         outer = self.frame.outer
@@ -181,6 +183,7 @@ class App:
         self.refresh_history()
         self.on_yt_mode()
         self.show_tab(self.s.get("tab", "YouTube"))
+        self.apply_theme(self.theme_var.get(), self.dark, save=False)
         self.frame.center(640)
 
         root.bind("<Control-Return>", lambda e: self.add_jobs())
@@ -423,6 +426,31 @@ class App:
         R.button(row, "Show in folder", lambda: self.hist_open(True)).pack(side="left", padx=4)
         R.button(row, "Clear history", self.hist_clear).pack(side="right")
 
+    # ---- themes
+    def theme_picked(self):
+        self.apply_theme(self.theme_var.get(), self.dark)
+
+    def toggle_dark(self):
+        self.apply_theme(self.theme_var.get(), not self.dark)
+
+    def apply_theme(self, name, dark=False, save=True):
+        name = name if name in R.THEMES else "Classic 95"
+        self.theme_var.set(name)
+        self.dark = bool(dark)                      # kept even on themes without one, so it comes back on 10 / 11
+        R.set_theme(name, self.dark)
+        R.apply_tree(self.root)
+        if R.has_dark(name):
+            self.dark_btn.configure(text="Light mode" if self.dark else "Dark mode")
+            self.dark_btn.pack(side="right", padx=(0, 4), pady=2)
+        else:
+            self.dark_btn.pack_forget()
+        R.apply_tree(self.dark_btn)
+        self.refresh_login()
+        self.refresh_queue()
+        self.frame.fit()
+        if save:
+            self.persist()
+
     def _menu(self, parent):
         mb = tk.Frame(parent, bg=R.GRAY)
         mb.pack(fill="x", padx=2)
@@ -431,6 +459,7 @@ class App:
             ("Tools", [("Show log...", self.show_log), ("Update download engines...", self.check_updates),
                        ("-", None), ("Log in to Instagram...", self.ig_login),
                        ("Log out of Instagram", self.ig_logout)]),
+            ("View", [("theme", name) for name in R.THEMES]),
             ("Help", [("How to use", self.help), ("Check for RetroGrab updates...",
                                                    lambda: self.check_app_update(manual=True)),
                       ("-", None), ("About...", self.about)]),
@@ -441,9 +470,15 @@ class App:
             menu = tk.Menu(m, tearoff=0, font=R.FONT, bg=R.GRAY, activebackground=R.NAVY,
                            activeforeground=R.WHITE, relief="raised", bd=2)
             for lbl, cmd in items:
-                menu.add_separator() if lbl == "-" else menu.add_command(label=lbl, command=cmd)
+                if lbl == "theme":
+                    menu.add_radiobutton(label=cmd, variable=self.theme_var, value=cmd, command=self.theme_picked)
+                elif lbl == "-":
+                    menu.add_separator()
+                else:
+                    menu.add_command(label=lbl, command=cmd)
             m["menu"] = menu
             m.pack(side="left")
+        self.dark_btn = R.button(mb, "Dark mode", self.toggle_dark)   # only shown on themes that have one
         tk.Frame(parent, height=2, bg=R.DARK).pack(fill="x", padx=2)
 
     # ================================================================ UI logic
@@ -594,7 +629,7 @@ class App:
 
     def persist(self):
         self.s.update({
-            "folder": self.folder.get(), "tab": self.tab,
+            "folder": self.folder.get(), "tab": self.tab, "theme": self.theme_var.get(), "dark": self.dark,
             "yt": {"mode": self.yt_mode.get(), "quality": self.yt_quality_choice(), "fmt": self.yt_fmt.get(),
                    "playlist": self.yt_playlist.get(), "subs": self.yt_subs.get(), "thumb": self.yt_thumb.get()},
             "ig": {"mode": self.ig_mode.get()},
@@ -634,9 +669,7 @@ class App:
         wrap.pack(fill="both", expand=True)
         self.log_text = tk.Text(wrap, width=90, height=24, font=R.MONO, bg=R.BLACK, fg=R.GRAY, bd=0,
                                 wrap="char", highlightthickness=0)
-        sb = tk.Scrollbar(wrap, command=self.log_text.yview)
-        self.log_text.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
+        R.scrollbar(wrap, self.log_text)
         self.log_text.pack(side="left", fill="both", expand=True)
         self.log_text.insert("end", "\n".join(self.log_lines) + ("\n" if self.log_lines else ""))
         self.log_text.see("end")
@@ -697,7 +730,7 @@ class App:
             name = j.get("name") or j["url"]
             note = f"  - {j['note']}" if j["note"] else ""
             self.qlist.insert("end", f"{j['status']:<11} {j['service']:<10} {name}{note}")
-            color = {"Done": "#006400", "Failed": "#b00000", "Cancelled": R.DARK}.get(j["status"])
+            color = {"Done": R.T["ok"], "Failed": R.T["err"], "Cancelled": R.T["muted"]}.get(j["status"])
             if color:
                 self.qlist.itemconfigure("end", foreground=color)
         for i in sel:
@@ -914,10 +947,10 @@ class App:
     def refresh_login(self):
         if has_instagram_login():
             self.ig_login_label.configure(text="✔ Logged in. Downloads use your Instagram account.",
-                                          fg="#006400")
+                                          fg=R.T["ok"])
             self.ig_logout_btn.configure(state="normal")
         else:
-            self.ig_login_label.configure(text="Not logged in. Most Instagram links need a login.", fg="#b00000")
+            self.ig_login_label.configure(text="Not logged in. Most Instagram links need a login.", fg=R.T["err"])
             self.ig_logout_btn.configure(state="disabled")
 
     def ig_privacy(self):
@@ -933,7 +966,7 @@ class App:
         cmd =[sys.executable, "--ig-login"] if FROZEN else [sys.executable, os.path.abspath(sys.argv[0]),
                                                               "--ig-login"]
         self.ig_login_btn.configure(state="disabled")
-        self.ig_login_label.configure(text="Log in using the window that just opened...", fg=R.BLACK)
+        self.ig_login_label.configure(text="Log in using the window that just opened...", fg=R.T["fg"])
 
         def wait():
             try:
