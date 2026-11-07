@@ -173,6 +173,10 @@ class App:
         R.label(sbar, textvariable=self.speed, relief="sunken", bd=1, width=16, anchor="w", padx=4).pack(
             side="left", padx=(2, 0))
 
+        self.link_job = None
+        for b in (self.yt_urls, self.ig_urls, self.sp_urls):
+            self._watch_box(b)
+        self.yt_playlist.trace_add("write", self.yt_refresh)
         self.refresh_login()
         self.refresh_history()
         self.on_yt_mode()
@@ -343,7 +347,9 @@ class App:
             R.radio(r, m, self.yt_mode, m, self.on_yt_mode).pack(side="left", padx=(0, 14))
         r, self.yt_q_label = self._row(g, "Resolution:")
         self.yt_quality = tk.StringVar(value=s.get("quality", "Best"))
-        self.yt_q_menu = R.Dropdown(r, self.yt_quality, VIDEO_QUALITIES, width=11)
+        self.yt_wanted = s.get("quality") if s.get("quality") in VIDEO_QUALITIES else "Best"  # what the user chose
+        self.yt_url, self.yt_info, self.yt_checking, self.yt_token, self.yt_cache = None, None, False, 0, {}
+        self.yt_q_menu = R.Dropdown(r, self.yt_quality, VIDEO_QUALITIES, width=12, command=self.on_yt_quality_pick)
         self.yt_q_menu.pack(side="left")
         R.label(r, "   File type:").pack(side="left")
         self.yt_fmt = tk.StringVar(value=s.get("fmt", "mp4"))
@@ -451,10 +457,110 @@ class App:
 
     def on_yt_mode(self):
         audio = self.yt_mode.get() == "Audio only"
-        self.yt_q_menu.set_values(AUDIO_QUALITIES if audio else VIDEO_QUALITIES)
+        self._apply_yt_qualities()
         self.yt_fmt_menu.set_values(AUDIO_FORMATS if audio else VIDEO_FORMATS)
         self.yt_q_label.configure(text="Bitrate:" if audio else "Resolution:")
         self.yt_hint.configure(text=HINTS.get(self.yt_fmt.get(), ""))
+
+    # ---- links go to the right tab, and the YouTube tab shows that video's real qualities
+    def _watch_box(self, box):
+        def changed(_e):
+            if box.edit_modified():
+                box.edit_modified(False)
+                if self.link_job:
+                    self.root.after_cancel(self.link_job)
+                self.link_job = self.root.after(120, self.route_links)
+        box.bind("<<Modified>>", changed)
+
+    def route_links(self):
+        self.link_job = None
+        boxes = {"YouTube": self.yt_urls, "Instagram": self.ig_urls, "Spotify": self.sp_urls}
+        target = None
+        for svc, box in boxes.items():
+            words = box.get("1.0", "end").split()
+            keep = []
+            for w in words:
+                dest = detect_service(w)
+                if dest and dest != svc:
+                    other = boxes[dest]
+                    other.insert("end", ("\n" if other.get("1.0", "end").strip() else "") + w)
+                    target = dest
+                else:
+                    keep.append(w)
+            if len(keep) != len(words):
+                box.delete("1.0", "end")
+                box.insert("1.0", "\n".join(keep))
+        if target:
+            self.show_tab(target)
+            boxes[target].focus_set()
+        self.yt_refresh()
+
+    def yt_refresh(self, *_):
+        urls = [w for w in self.yt_urls.get("1.0", "end").split() if detect_service(w) == "YouTube"]
+        one = urls[0] if len(urls) == 1 else None
+        if one and ("/playlist" in one or ("list=" in one and self.yt_playlist.get())):
+            one = None  # every video in a playlist can differ: keep the full list
+        if one == self.yt_url:
+            return
+        self.yt_url, self.yt_info, self.yt_checking = one, None, False
+        self.yt_token += 1
+        if one in self.yt_cache:
+            self.yt_info = self.yt_cache[one]
+        elif one:
+            self.yt_checking = True
+            token = self.yt_token
+
+            def run():
+                try:
+                    import engine
+                    self.events.put(("yt_q", (token, one, engine.video_qualities(one), None)))
+                except Exception as e:
+                    self.events.put(("yt_q", (token, one, None, e)))
+
+            threading.Thread(target=run, daemon=True).start()
+        self._apply_yt_qualities()
+
+    def yt_q_result(self, token, url, info, err):
+        if token != self.yt_token:
+            return  # the link changed while we were checking
+        self.yt_checking = False
+        if info:
+            self.yt_cache[url] = self.yt_info = info
+        else:
+            self.add_log(f"Couldn't check qualities for {url}: {err}")
+            if not self.current:
+                self.status.set("Couldn't check this video's qualities. Showing the full list.")
+        self._apply_yt_qualities()
+
+    def _apply_yt_qualities(self):
+        if self.yt_mode.get() == "Audio only":
+            self.yt_q_menu.set_values(AUDIO_QUALITIES)
+        elif self.yt_checking:
+            self.yt_q_menu.set_values(VIDEO_QUALITIES)
+            self.yt_quality.set("Checking...")
+        elif self.yt_info:
+            labels = self.yt_info[0]
+            best = "Best (" + labels[0].split()[0] + ")"
+            self.yt_q_menu.set_values([best] + labels)
+            if self.yt_wanted == "Best":
+                self.yt_quality.set(best)
+            else:  # the closest quality that doesn't go above the user's choice
+                num = lambda q: int(q.split("p")[0])
+                fits = [q for q in labels if num(q) <= num(self.yt_wanted)]
+                self.yt_quality.set(fits[0] if fits else labels[-1])
+        else:
+            self.yt_q_menu.set_values(VIDEO_QUALITIES)
+            self.yt_quality.set(self.yt_wanted)
+
+    def on_yt_quality_pick(self, value):
+        if self.yt_mode.get() != "Audio only":
+            self.yt_wanted = "Best" if value.startswith("Best") else value
+
+    def yt_quality_choice(self):
+        v = self.yt_quality.get()
+        if self.yt_mode.get() == "Audio only":
+            return v
+        return self.yt_wanted if v == "Checking..." else "Best" if v.startswith("Best") else v
 
     def paste(self, box):
         try:
@@ -489,7 +595,7 @@ class App:
     def persist(self):
         self.s.update({
             "folder": self.folder.get(), "tab": self.tab,
-            "yt": {"mode": self.yt_mode.get(), "quality": self.yt_quality.get(), "fmt": self.yt_fmt.get(),
+            "yt": {"mode": self.yt_mode.get(), "quality": self.yt_quality_choice(), "fmt": self.yt_fmt.get(),
                    "playlist": self.yt_playlist.get(), "subs": self.yt_subs.get(), "thumb": self.yt_thumb.get()},
             "ig": {"mode": self.ig_mode.get()},
             "sp": {"fmt": self.sp_fmt.get(), "quality": self.sp_quality.get(),
@@ -570,7 +676,9 @@ class App:
                 opts = {"fmt": self.sp_fmt.get(), "quality": self.sp_quality.get(),
                         "subfolder": self.sp_subfolder.get(), "skip_existing": self.sp_skip.get()}
             else:
-                opts = {"mode": self.yt_mode.get(), "quality": self.yt_quality.get(), "fmt": self.yt_fmt.get(),
+                q = self.yt_quality_choice()
+                limit = self.yt_info[1].get(q) if self.yt_info and url == self.yt_url else None
+                opts = {"mode": self.yt_mode.get(), "quality": q, "height_limit": limit, "fmt": self.yt_fmt.get(),
                         "playlist": self.yt_playlist.get(), "subs": self.yt_subs.get(),
                         "thumb": self.yt_thumb.get()}
             opts["folder"] = folder
@@ -668,6 +776,8 @@ class App:
                         self.current["name"] = data[:80]
                 elif kind == "ask_lang":
                     self.root.after(0, lambda d=data: self.language_dialog(*d))
+                elif kind == "yt_q":
+                    self.yt_q_result(*data)
                 elif kind == "saved":
                     self.add_history(*data)
                 elif kind == "start":

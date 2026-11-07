@@ -114,18 +114,21 @@ def base_opts(rep, cancel, folder, on_saved=None):
 
 
 def audio_pp(fmt, quality):
-    q = "0" if quality == "Best" or fmt in ("wav", "flac") else quality.split()[0]
+    q = "0" if quality.startswith("Best") or fmt in ("wav", "flac") else quality.split()[0]
     return {"key": "FFmpegExtractAudio", "preferredcodec": fmt, "preferredquality": q}
 
 
-def apply_media_choice(opts, mode, fmt, quality):
+def apply_media_choice(opts, mode, fmt, quality, limit=None):
     """Fill format selection + postprocessors for Video+Audio / Video only / Audio only."""
     pps = opts.setdefault("postprocessors", [])
     if mode == "Audio only":
         opts["format"] = "ba/b"
         pps.append(audio_pp(fmt, quality))
         return
-    h = "" if quality == "Best" else f"[height<={quality.split('p')[0]}]"
+    if quality.startswith("Best"):
+        h = ""
+    else:  # `limit` is this video's real height for the label (vertical and widescreen videos differ)
+        h = f"[height<={limit or quality.split('p')[0]}]"
     opts["format_sort"] = VIDEO_SORT.get(fmt, ["res"])
     if mode == "Video only":
         opts["format"] = f"bv{h}/bv*{h}/bv"
@@ -163,6 +166,41 @@ def _run_ydl(opts, urls, cancel, cookies=None):
 
 
 # ---------------------------------------------------------------- YouTube
+def quality_label(n):
+    return {4320: "4320p (8K)", 2160: "2160p (4K)"}.get(n, f"{n}p")
+
+
+def qualities_from_formats(formats):
+    """-> ([labels, highest first], {label: real height}) for the video formats YouTube offers."""
+    found = {}
+    for f in formats or []:
+        height = f.get("height")
+        if not height or f.get("vcodec") in (None, "none"):
+            continue
+        m = re.match(r"(\d{3,4})p", str(f.get("format_note") or ""))
+        n = int(m.group(1)) if m else min(height, f.get("width") or height)  # the "p" number is the short side
+        found[n] = max(found.get(n, 0), height)
+    return [quality_label(n) for n in sorted(found, reverse=True)], {quality_label(n): h for n, h in found.items()}
+
+
+def video_qualities(url):
+    """Asks YouTube which qualities one video really has. Nothing is downloaded."""
+    class Quiet:
+        def debug(self, msg): pass
+        def info(self, msg): pass
+        def warning(self, msg): pass
+        def error(self, msg): pass
+
+    opts = {"logger": Quiet(), "quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True,
+            "socket_timeout": 12, "retries": 1, "js_runtimes": js_runtimes()}
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+    labels, heights = qualities_from_formats((info or {}).get("formats"))
+    if not labels:
+        raise JobError("no video formats found")
+    return labels, heights
+
+
 def run_youtube(job, rep, cancel):
     o = job["opts"]
     folder = os.path.join(o["folder"], "YouTube")
@@ -170,7 +208,7 @@ def run_youtube(job, rep, cancel):
     opts["outtmpl"] = {"default": "%(title).150B [%(id)s].%(ext)s",
                        "pl_video": "%(playlist_title).80B/%(playlist_index)03d - %(title).150B [%(id)s].%(ext)s"}
     opts["noplaylist"] = not o.get("playlist")
-    apply_media_choice(opts, o["mode"], o["fmt"], o["quality"])
+    apply_media_choice(opts, o["mode"], o["fmt"], o["quality"], o.get("height_limit"))
     pps = opts["postprocessors"]
     if o.get("subs") and o["mode"] != "Audio only":
         opts.update(writesubtitles=True, subtitleslangs=["en.*", "en"])
