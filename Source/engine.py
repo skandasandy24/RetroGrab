@@ -365,13 +365,17 @@ def run_spotify(job, rep, cancel):
             rep.status(f"Song {i} of {len(tracks)}")
             try:
                 candidates = spotify.gather(searcher, t, log=rep.log)
-                langs = spotify.available_languages(candidates, t)
-                if len(langs) >= 2:
-                    rep.log(f"'{label}' is available in: {', '.join(l.title() for l in langs)}")
-                    if remembered in langs:
+                if cancel.is_set():
+                    raise Cancelled()
+                versions = spotify.language_versions(searcher, t, candidates, log=rep.log)
+                if cancel.is_set():
+                    raise Cancelled()
+                if len(versions) >= 2:
+                    preferred = spotify.spotify_version(t)
+                    if remembered in versions:
                         lang = remembered
                     elif ask:
-                        answer = ask(label, langs, spotify.spotify_language(t), len(tracks) > 1)
+                        answer = ask(label, list(versions), preferred, len(tracks) > 1)
                         if cancel.is_set():
                             raise Cancelled()
                         if not answer:
@@ -381,11 +385,12 @@ def run_spotify(job, rep, cancel):
                         if keep:
                             remembered = lang
                     else:
-                        lang = spotify.spotify_language(t) or langs[0]
+                        lang = next(iter(versions))
                     rep.log(f"Language for '{label}': {lang.title()}")
-                    best = spotify.find_language_version(searcher, t, lang, candidates, log=rep.log)
-                    t = dict(t, title=spotify.with_language(t, lang)["title"])
-                    label = f"{', '.join(t['artists'])} - {t['title']}"
+                    best = versions[lang]
+                    if lang != preferred:
+                        t = dict(t, title=f"{spotify.strip_language(t['title'])} [{lang.title()}]")
+                        label = f"{', '.join(t['artists'])} - {t['title']}"
                 else:
                     best = spotify.find_match(searcher, t, log=rep.log, candidates=candidates)
                 base = sanitize_filename(label)[:180]

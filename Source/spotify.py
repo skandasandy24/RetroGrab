@@ -149,8 +149,6 @@ def score(entry, track):
             s += 30
         elif got:
             s -= 100
-        elif track.get("_strict_lang"):
-            s -= 60  # user picked a language: unlabelled uploads can't be trusted to be it
 
     if entry.get("_source") == "ytmusic":
         s += 10  # official track audio, no video intro/outro
@@ -187,7 +185,9 @@ def search_query(track):
     return f"{', '.join(track['artists'][:2])} - {track['title']}"
 
 
-_LANG_TAG = re.compile(r"\s*[\[\(]\s*(" + "|".join(LANGUAGES) + r")(?:\s+version)?\s*[\]\)]", re.I)
+_LANGUAGE_PATTERN = "|".join(LANGUAGES)
+_LANG_TAG = re.compile(rf"\s*[\[(]\s*({_LANGUAGE_PATTERN})(?:\s+version)?\s*[\])]", re.I)
+_FILM_LANG = re.compile(rf"\s*-\s*({_LANGUAGE_PATTERN})\s*$", re.I)
 
 
 def strip_language(title):
@@ -195,13 +195,10 @@ def strip_language(title):
     return _LANG_TAG.sub("", title or "").strip()
 
 
-def with_language(track, lang):
-    """Copy of the track asking for a specific language version (results must be labelled with it)."""
-    t = dict(track)
-    t["title"] = f"{strip_language(track['title'])} [{lang.title()}]"
-    t["album"] = strip_language(track.get("album") or "") or None
-    t["_strict_lang"] = True
-    return t
+def film_of(title):
+    """Return the normalized film name from a '(From "Film")' title."""
+    match = re.search(r'\(from\s+"?(.+?)"?\)', unicodedata.normalize("NFKC", title or ""), re.I)
+    return norm(_FILM_LANG.sub("", match.group(1))) if match else None
 
 
 def _ytm_search(searcher, query, n, log):
@@ -229,9 +226,9 @@ def _merge(*lists):
     return unique
 
 
-def spotify_language(track):
-    langs = languages(f"{track['title']} {track.get('album') or ''}")
-    return next(iter(langs)) if len(langs) == 1 else None
+def spotify_version(track):
+    langs = languages(track["title"])
+    return next(iter(langs)) if len(langs) == 1 else "original"
 
 
 def gather(searcher, track, log=lambda m: None):
@@ -249,35 +246,58 @@ def gather(searcher, track, log=lambda m: None):
     return _merge(*lists)
 
 
-def find_language_version(searcher, track, lang, candidates, log=lambda m: None):
-    """Best match for the chosen language - searches for that version specifically too."""
-    t = with_language(track, lang)
-    extra = _ytm_search(searcher, search_query(t), 5, log)
-    return find_match(searcher, t, log, candidates=_merge(extra, candidates))
-
-
-def available_languages(candidates, track):
-    """Languages this song is offered in, judged from results that look like the same song
-    (similar title - 'Veezha Veera' vs 'Veera Veera' - or the same film, and similar length)."""
-    want = _words(core_title(track["title"]))
-    film = re.search(r"\(from\s+(.+?)\)", norm_quotes(track["title"]), re.I)
-    found = set()
-    for e in candidates:
-        title = e.get("title") or ""
-        langs = languages(title)
-        if len(langs) != 1:
+def language_versions(searcher, track, candidates, log=lambda m: None):
+    """Return candidate entries by version, with Spotify's version first when present."""
+    log("Checking language versions…")
+    want = set(core_title(strip_language(track["title"])).split())
+    film = film_of(track["title"])
+    threshold = 0.5 if film else 0.8
+    versions = {}
+    checked = 0
+    for entry in candidates:
+        title = entry.get("title") or ""
+        overlap = len(want & set(core_title(title).split())) / len(want) if want else 0
+        if overlap < threshold or (film and film_of(title) != film):
             continue
-        if e.get("duration") and track["duration"] and abs(e["duration"] - track["duration"]) > 25:
+
+        is_music = entry.get("_source") == "ytmusic"
+        duration = entry.get("duration")
+        album = entry.get("album")
+        title_languages = languages(title)
+        if is_music and not title_languages and checked < 6:
+            checked += 1
+            try:
+                # The direct video extractor supplies album metadata before result processing.
+                info = searcher.extract_info(f"https://music.youtube.com/watch?v={entry['id']}",
+                                             download=False, process=False)
+                if info:
+                    duration = info.get("duration") or duration
+                    album = info.get("album") or album
+                    entry = dict(entry, duration=duration, album=album)
+            except Exception as exc:
+                log(f"Couldn't check album metadata for '{title}' ({str(exc)[:80]}).")
+
+        if duration and track["duration"] and abs(duration - track["duration"]) > 25:
             continue
-        same_title = want and len(want & _words(core_title(title))) / len(want) >= 0.5
-        same_film = film and norm(film.group(1)) in norm(title)
-        if same_title and (same_film or not film):
-            found |= langs
-    return sorted(found)
+        found = title_languages | languages(album)
+        if len(found) > 1:
+            continue
+        key = next(iter(found)) if found else "original"
+        if not is_music and key == "original":
+            continue
+        if key not in versions or (is_music and versions[key].get("_source") != "ytmusic"):
+            versions[key] = entry
 
+    preferred = spotify_version(track)
+    if preferred != "original" and "original" in versions:
+        original = versions.pop("original")
+        if preferred not in versions or versions[preferred].get("_source") != "ytmusic":
+            versions[preferred] = original
 
-def norm_quotes(s):
-    return unicodedata.normalize("NFKC", s or "").replace("＂", '"')
+    keys = sorted(versions, key=lambda key: (key != preferred, key))
+    if keys:
+        log(f"Found versions: {', '.join(key.title() for key in keys)}")
+    return {key: versions[key] for key in keys}
 
 
 def find_match(searcher, track, log=lambda m: None, candidates=None):

@@ -871,12 +871,11 @@ class App:
         g = R.group(body, "Download it in")
         g.pack(fill="x")
         for lang in langs:
-            text = lang.title() + ("      ← as listed on Spotify" if lang == default else "")
+            text = lang.title() + (" (Spotify's version)" if lang == default else "")
             R.radio(g, text, var, lang).pack(anchor="w")
         keep = tk.BooleanVar(value=True)
         if multi:
-            R.check(body, "Use this language for the rest of this album / playlist", keep).pack(anchor="w",
-                                                                                                pady=(8, 0))
+            R.check(body, "Use for the rest of this album / playlist", keep).pack(anchor="w", pady=(8, 0))
         row = tk.Frame(body, bg=R.GRAY)
         row.pack(fill="x", pady=(12, 0))
         R.button(row, "Skip song", lambda: finish(None), width=10).pack(side="right")
