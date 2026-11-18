@@ -137,9 +137,33 @@ def make_zip(built):
     print(f"zip: {out}  ({os.path.getsize(out) / 1048576:.0f} MB)")
 
 
+# Installed copies update themselves: the old updater swaps _internal but may keep the old
+# RetroGrab.exe. If the Python version changes (python312.dll -> python314.dll), that old exe
+# can't start -> every user broken (happened in 1.5.1). Never change this without a plan.
+REQUIRED_PY = (3, 12)
+
+
+def check_python():
+    if sys.version_info[:2] != REQUIRED_PY:
+        sys.exit(f"STOP: this is Python {sys.version_info[0]}.{sys.version_info[1]}, RetroGrab must be built "
+                 f"with {REQUIRED_PY[0]}.{REQUIRED_PY[1]}. Use build.bat (it uses .venv312).")
+
+
+def check_output(built):
+    """Last check before a release: the build must ship the same Python DLL as before."""
+    dll = f"python{REQUIRED_PY[0]}{REQUIRED_PY[1]}.dll"
+    found = [f for f in os.listdir(os.path.join(built, "_internal")) if f.lower().startswith("python3")
+             and f.lower().endswith(".dll")]
+    if found != [dll]:
+        sys.exit(f"STOP: build has {found}, expected only {dll}. Not making a release.")
+    print("python dll check OK:", dll)
+
+
 if __name__ == "__main__":
+    check_python()
     vendor_tools()
     built = pyinstaller()
+    check_output(built)
     install_app(built)
     make_zip(built)
     shutil.rmtree(WORK, ignore_errors=True)
