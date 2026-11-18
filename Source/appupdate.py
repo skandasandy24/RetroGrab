@@ -27,9 +27,24 @@ def vtuple(v):
     return tuple(int(x) for x in re.findall(r"\d+", v or "0")[:4])
 
 
+FAILED_NOTE = os.path.join(DATA, "updates", "update_failed.txt")
+
+
 def cleanup():
-    """Remove leftovers of a finished update (helper script, temp folders)."""
+    """Remove leftovers of a finished update. Returns the helper's failure note, if any."""
     shutil.rmtree(WORK, ignore_errors=True)
+    shutil.rmtree(os.path.join(APP_DIR, "_internal.old"), ignore_errors=True)
+    try:
+        os.remove(os.path.join(APP_DIR, "RetroGrab.exe.old"))
+    except OSError:
+        pass
+    try:
+        with open(FAILED_NOTE, encoding="utf-8", errors="replace") as f:
+            note = f.read().strip()
+        os.remove(FAILED_NOTE)
+        return note or "The update could not be installed."
+    except OSError:
+        return None
 
 
 def check(current=APP_VERSION):
@@ -104,22 +119,69 @@ def download(info, progress=lambda done, total: None, cancelled=lambda: False):
 
 
 def install_and_restart(new_dir):
-    """Write and start the helper that swaps files once this process has exited."""
+    """Write and start the helper that swaps files once this process has exited.
+
+    The swap is all-or-nothing: the program folder (_internal) and RetroGrab.exe are only
+    ever replaced together. Renaming _internal fails while any RetroGrab is still running
+    from this folder, so the helper waits for that; if it can't get the folder, or any
+    later step fails, it puts the old files back and starts the old version, which then
+    reports the failure. (1.5.1 got a new _internal but kept the old .exe -> wouldn't start.)
+    No paths inside ( ) blocks: folder names like "Retro Grab(Sandy)" break cmd blocks.
+    """
     bat = os.path.join(WORK, "apply_update.bat")
+    pid = os.getpid()
     script = f"""@echo off
 chcp 65001 >nul
 set "APPDIR={APP_DIR}"
 set "NEW={new_dir}"
+set "NOTE={FAILED_NOTE}"
+set "WHY="
 :wait
-tasklist /FI "PID eq {os.getpid()}" 2>nul | find "{os.getpid()}" >nul
-if not errorlevel 1 (
-    ping -n 2 127.0.0.1 >nul
-    goto wait
-)
-robocopy "%NEW%\\_internal" "%APPDIR%\\_internal" /MIR /R:5 /W:1 /NFL /NDL /NJH /NJS /NP >nul
-copy /Y "%NEW%\\RetroGrab.exe" "%APPDIR%\\RetroGrab.exe" >nul
+tasklist /FI "PID eq {pid}" /NH 2>nul | find " {pid} " >nul
+if errorlevel 1 goto gone
+ping -n 2 127.0.0.1 >nul
+goto wait
+:gone
+if not exist "%NEW%\\RetroGrab.exe" set "WHY=the downloaded update is incomplete"
+if not exist "%NEW%\\_internal" set "WHY=the downloaded update is incomplete"
+if defined WHY goto failed
+if exist "%APPDIR%\\_internal.old" rmdir /S /Q "%APPDIR%\\_internal.old"
+if exist "%APPDIR%\\RetroGrab.exe.old" del /F /Q "%APPDIR%\\RetroGrab.exe.old"
+set /a TRIES=0
+:lock
+ren "%APPDIR%\\_internal" _internal.old >nul 2>&1
+if not errorlevel 1 goto locked
+set /a TRIES+=1
+if %TRIES% GEQ 90 goto busy
+ping -n 2 127.0.0.1 >nul
+goto lock
+:busy
+set "WHY=RetroGrab was still open (another window, or antivirus was scanning it)"
+goto failed
+:locked
+move "%NEW%\\_internal" "%APPDIR%\\_internal" >nul 2>&1
+if errorlevel 1 goto undo_internal
+if not exist "%APPDIR%\\RetroGrab.exe" goto put_exe
+ren "%APPDIR%\\RetroGrab.exe" RetroGrab.exe.old >nul 2>&1
+if errorlevel 1 goto undo_new
+:put_exe
+move "%NEW%\\RetroGrab.exe" "%APPDIR%\\RetroGrab.exe" >nul 2>&1
+if errorlevel 1 goto undo_exe
 if exist "%NEW%\\README.txt" copy /Y "%NEW%\\README.txt" "%APPDIR%\\README.txt" >nul
-rmdir /S /Q "{os.path.join(WORK, 'new')}"
+rmdir /S /Q "%APPDIR%\\_internal.old"
+del /F /Q "%APPDIR%\\RetroGrab.exe.old" >nul 2>&1
+goto done
+:undo_exe
+if exist "%APPDIR%\\RetroGrab.exe.old" ren "%APPDIR%\\RetroGrab.exe.old" RetroGrab.exe
+:undo_new
+rmdir /S /Q "%APPDIR%\\_internal"
+:undo_internal
+ren "%APPDIR%\\_internal.old" _internal
+set "WHY=Windows wouldn't let RetroGrab replace its files"
+:failed
+> "%NOTE%" echo The update couldn't be installed because %WHY%. Nothing was changed - close every RetroGrab window and try again.
+:done
+if exist "{os.path.join(WORK, 'new')}" rmdir /S /Q "{os.path.join(WORK, 'new')}"
 start "" "%APPDIR%\\RetroGrab.exe"
 (goto) 2>nul & del "%~f0"
 """

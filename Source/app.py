@@ -203,7 +203,10 @@ class App:
 
         def run():
             if not manual:
-                appupdate.cleanup()  # leftovers from a previous update
+                note = appupdate.cleanup()  # leftovers from a previous update
+                if note:
+                    self.root.after(0, lambda: (self.add_log(f"Update failed: {note}"),
+                                                messagebox.showwarning(APP_NAME, note, parent=self.root)))
             try:
                 info = appupdate.check()
                 err = None
